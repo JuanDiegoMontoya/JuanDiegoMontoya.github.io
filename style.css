@@ -1,6 +1,9 @@
+body, p {
+  font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
 body {
   background-color: lightblue;
-  font-family: "Comic Sans MS", "Comic Sans", cursive;
 }
 
 h1 {
@@ -8,9 +11,19 @@ h1 {
   text-align: center;
 }
 
+p, pre {
+  margin-left: 27%;
+  margin-right: 27%;
+}
+
 p {
-  font-family: helvetica;
-  font-size: 20px;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+pre {
+  background-color: gray;
+  font-size: 16px;
 }
 
 ul {
