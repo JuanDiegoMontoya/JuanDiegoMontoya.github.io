@@ -4,20 +4,137 @@
     <title>Particles</title>
     <link rel="stylesheet" href="../style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="../highlight/styles/night-owl.min.css">
+    <script src="../highlight/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
   </head>
   <body>
-    <ul>
+    <ul class="headerBar">
       <li><a href="../index.html">Home</a></li>
       <li><a href="../blog.html">Blog</a></li>
       <li><a href="../projects.html">Projects</a></li>
       <li><a href="../about.html">About</a></li>
     </ul>
-    <h1>Imagine. Particles.</h1>
+    <h1>A Fast and Simple Particle System</h1>
+    <h2>Introduction</h2>
     <p>
-      You probably want them to be fast.
+      This post will cover the architecture of the particle system implemented in my cleverly-named game engine, 
+      <a style="white-space:nowrap" class="link" href="https://github.com/JuanDiegoMontoya/Gengine">Gengine</a>
     </p>
     <p>
-      Fortunately for you, I have just the trick.
+      Why do we want particles?<br>
     </p>
+    <p>
+      Next, I will emulate a naive attempt to make a CPU-driven particle system that uses instancing to optimize rendering.
+      A fake graphics API is used in this example to convey intent more clearly.
+    </p>
+    <pre><code class="language-cpp">
+struct Particle
+{
+    vec4 color;
+    vec3 position;
+    vec3 velocity;
+
+    void Update() { position += velocity; }
+};
+
+// component
+struct ParticleEmitter
+{
+    vec4 color;
+    vec3 minPosition, maxPosition;
+    vec3 minVelocity, maxVelocity;
+
+    uint32_t numParticles;
+    Buffer particlesBuffer;
+};
+
+void UpdateEmitter(const ParticleEmitter& emitter)
+{
+    Particle* particlesMapped = emitter.particlesBuffer.MapPointer();
+
+    for (size_t i = 0; i < emitter.numParticles; i++)
+    {
+        particlesMapped[i].Update();
+    }
+
+    emitter.particlesBuffer.UnmapPointer();
+}
+
+void RenderEmitter(const ParticleEmitter& emitter)
+{
+    BindShader(particleShader);
+    /* setup uniform data, like the view-projection matrix */
+    BindVertexFormat(particleVertexFormat);
+    BindVertexBuffer(quadGeometryVertexBuffer);
+    BindIndexBuffer(quadGeometryIndexBuffer)
+    BindInstancedBuffer(emitter.particlesBuffer);
+
+    DrawInstanced(quadIndexCount, emitter.numParticles, 0, 0, 0);
+}
+    </code></pre>
+    <p>
+      This approach is simple, and may even be sufficient in many cases, but in our case the drawbacks are too great.
+    </p>
+    <ul>
+      <li>
+        Mapping a buffer every time an emitter is updated introduces a sync point in non-explicit APIs (OpenGL and D3D11), as the driver must wait for the buffer to no longer be in use on the GPU before giving you a pointer you can write to. This can be extremely slow.
+      </li>
+      <li>
+        In explicit APIs, or if you use persistent mapping in OpenGL, you must do additional work to ensure the buffer region is not being on the GPU before you write. This entails N-buffering your particle data (increasing memory footprint) and/or using sync objects to manually synchronize GPU reads and CPU writes.
+      </li>
+      <li>asdfioaasdfioaasdfioaasdfioaasdfioaasdfi asdfioaasdfioaasdfioaasdfioaasdfioaasdfio aasdfioaasd        fioaasdfioaasdfioaasdfioaasdfioaasdfioa asdfioaasdfioaasdfioaasdfioa</li>
+    </ul>
+    <h2>Architecture</h2>
+    <p>
+      We want any entity to be able to emit particles, so we'll make a new component for particle emitters.
+    </p>
+    <pre><code class="language-cpp">
+struct ParticleEmitter
+{
+  uint64_t handle{};
+
+  struct ParticleEmitterParams
+  {
+    vec3 minParticleOffset{ -1 };
+    vec3 maxParticleOffset{ 1 };
+    vec3 minParticleVelocity{ -1 };
+    vec3 maxParticleVelocity{ 1 };
+    vec3 minParticleAccel{ -1 };
+    vec3 maxParticleAccel{ 1 };
+    vec2 minParticleScale{ 1 };
+    vec2 maxParticleScale{ 1 };
+    vec4 minParticleColor{ 1 };
+    vec4 maxParticleColor{ 1 };
+
+    float interval{ 0.1f };
+    float minLife{ 1 };
+    float maxLife{ 1 };
+  } data;
+};
+    </code></pre>
+    <p>
+      It may look daunting, but it's just specifying some properties about how we want our particles to appear. <code>handle</code> is simply an opaque ID, "pointing" to an internal struct which stores additional data about this particular emitter. Let's look at that now.
+    </p>
+    <pre><code class="language-cpp">
+struct InternalEmitterData
+{
+  Buffer particleSharedDataBuffer{};
+  Buffer particleUpdateDataBuffer{};
+  Buffer particleRenderDataBuffer{};
+  Buffer freeStackBuffer{};
+  Buffer indirectDrawBuffer{};
+  Buffer indicesBuffer{};
+  TextureView textureView;
+  TextureSampler textureSampler;
+  uint32_t maxParticles{}; // "const"
+  uint32_t numParticles{};
+  float timer{ 0.0f };
+};
+    </code></pre>
+    <video controls class="center">
+      <source src="https://giant.gfycat.com/AptNiceEgg.mp4" type="video/mp4">
+    </video>
+    <div class="caption">10 million dynamic particles at 90+ FPS on a GTX 1060. This is what we'll be working towards. </div>
   </body>
 </html>
