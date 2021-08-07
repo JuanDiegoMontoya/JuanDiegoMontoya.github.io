@@ -2,6 +2,7 @@
 <html>
   <head>
     <title>Particles</title>
+    <link rel="icon" href="../assets/icon.png">
     <link rel="stylesheet" href="../style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="../highlight/styles/night-owl.min.css">
@@ -10,10 +11,10 @@
   </head>
   <body>
     <ul class="headerBar">
-      <li><a href="../index.html">Home</a></li>
-      <li><a href="../blog.html">Blog</a></li>
-      <li><a href="../projects.html">Projects</a></li>
-      <li><a href="../about.html">About</a></li>
+      <li class="headerli"><a href="../index.html">Home</a></li>
+      <li class="headerli"><a href="../blog.html">Blog</a></li>
+      <li class="headerli"><a href="../projects.html">Projects</a></li>
+      <li class="headerli"><a href="../about.html">About</a></li>
     </ul>
     <h1>A Fast and Simple Particle System</h1>
     <h2>Introduction</h2>
@@ -25,66 +26,80 @@
       Why do we want particles?<br>
     </p>
     <p>
-      Next, I will emulate a naive attempt to make a CPU-driven particle system that uses instancing to optimize rendering.
-      A fake graphics API is used in this example to convey intent more clearly.
+      Next, I will emulate a naive attempt to make a CPU-driven particle system that uses instancing to optimize rendering. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly.
     </p>
     <pre><code class="language-cpp">
-struct Particle
-{
-    vec4 color;
-    vec3 position;
-    vec3 velocity;
+struct Particle {
+  vec4 color;
+  vec3 position;
+  vec3 velocity;
 
-    void Update() { position += velocity; }
+  void Update() { position += velocity; }
 };
 
-// component
-struct ParticleEmitter
-{
-    vec4 color;
-    vec3 minPosition, maxPosition;
-    vec3 minVelocity, maxVelocity;
+struct ParticleEmitter {
+  vec4 color;
+  vec3 minPosition, maxPosition;
+  vec3 minVelocity, maxVelocity;
 
-    uint32_t numParticles;
-    Buffer particlesBuffer;
+  uint32_t numParticles;
+  Buffer particlesBuffer;
 };
 
-void UpdateEmitter(const ParticleEmitter& emitter)
-{
-    Particle* particlesMapped = emitter.particlesBuffer.MapPointer();
+void UpdateEmitter(const ParticleEmitter& emitter) {
+  Particle* particlesMapped = emitter.particlesBuffer.GetMappedPointer();
 
-    for (size_t i = 0; i < emitter.numParticles; i++)
-    {
-        particlesMapped[i].Update();
-    }
+  for (size_t i = 0; i &lt emitter.numParticles; i++) {
+      particlesMapped[i].Update();
+  }
 
-    emitter.particlesBuffer.UnmapPointer();
+  emitter.particlesBuffer.UnmapPointer();
 }
 
-void RenderEmitter(const ParticleEmitter& emitter)
-{
-    BindShader(particleShader);
-    /* setup uniform data, like the view-projection matrix */
-    BindVertexFormat(particleVertexFormat);
-    BindVertexBuffer(quadGeometryVertexBuffer);
-    BindIndexBuffer(quadGeometryIndexBuffer)
-    BindInstancedBuffer(emitter.particlesBuffer);
+void RenderEmitter(const ParticleEmitter& emitter) {
+  BindShader(particleShader);
+  /* setup uniform data, like the view-projection matrix */
+  BindVertexFormat(particleVertexFormat);
+  BindVertexBuffer(quadGeometryVertexBuffer);
+  BindIndexBuffer(quadGeometryIndexBuffer)
+  BindInstancedBuffer(emitter.particlesBuffer);
 
-    DrawInstanced(quadIndexCount, emitter.numParticles, 0, 0, 0);
+  DrawInstanced(quadIndexCount, emitter.numParticles, 0, 0, 0);
 }
     </code></pre>
     <p>
-      This approach is simple, and may even be sufficient in many cases, but in our case the drawbacks are too great.
+      I intentionally left out some detail, like handling particle creation, to keep the code brief. This approach is simple, and may even be sufficient in many cases. For us, the drawbacks are too great.
     </p>
     <ul>
       <li>
-        Mapping a buffer every time an emitter is updated introduces a sync point in non-explicit APIs (OpenGL and D3D11), as the driver must wait for the buffer to no longer be in use on the GPU before giving you a pointer you can write to. This can be extremely slow.
+        Mapping a buffer every time an emitter is updated introduces a sync point in non-explicit APIs (OpenGL and D3D11), as the driver must wait for the buffer to no longer be in use on the GPU before giving you a pointer you can write to. This manifests as a bubble in activity on both the CPU and the GPU timeline. This phenomenon is also known as a <a href="https://shawnhargreaves.com/blog/stalling-the-pipeline.html" class="link">pipeline stall</a>.
       </li>
       <li>
-        In explicit APIs, or if you use persistent mapping in OpenGL, you must do additional work to ensure the buffer region is not being on the GPU before you write. This entails N-buffering your particle data (increasing memory footprint) and/or using sync objects to manually synchronize GPU reads and CPU writes.
+        In explicit APIs, or if you use persistent mapping in OpenGL, you must do additional work to ensure the buffer region is not being used on the GPU before you write. This entails N-buffering your particle data (increasing memory footprint) and/or using sync objects to manually synchronize GPU reads and CPU writes.
       </li>
-      <li>asdfioaasdfioaasdfioaasdfioaasdfioaasdfi asdfioaasdfioaasdfioaasdfioaasdfioaasdfio aasdfioaasd        fioaasdfioaasdfioaasdfioaasdfioaasdfioa asdfioaasdfioaasdfioaasdfioa</li>
+      <li>
+        Even though the update method is simple, it can be a huge amount of work for a single thread to update all the particles of an emitter. One of the goals, after all, is to be able to have millions of particles!
+      </li>
     </ul>
+    <p>
+      What can we do about these problems? Let's take a closer look to see what the code is doing here and analyze our needs.
+    </p>
+    <ul>
+      <li>Every particle has the same, simple operation performed on it.</li>
+      <li>All particles can be updated independently of one another. That is, no particle is dependent on another.</li>
+      <li>The data lives on the GPU and is consumed by the GPU.</li>
+    </ul>
+    <p>
+      Very interesting. We know a tool that is great for concurrently operating on multiple data at once. It's called using multiple threads! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, we still have the glaring issue of synchronization, given that the data lives on the GPU, far away from the CPU. If only there was a way to execute arbitrary code on the GPU, the most powerful parallel processor available to consumer PCs...
+    </p>
+    <h2>Enter Compute Shaders</h2>
+    <p>
+      As you might've guessed, compute shaders are the perfect tool for this task.
+    </p>
+    <h2>Compute Shader Limitations</h2>
+    <p>
+      It would be remiss to use compute shaders without considering their drawbacks.
+    </p>
     <h2>Architecture</h2>
     <p>
       We want any entity to be able to emit particles, so we'll make a new component for particle emitters.
