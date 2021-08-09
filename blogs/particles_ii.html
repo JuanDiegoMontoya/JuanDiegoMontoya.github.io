@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Particles II</title>
+    <link rel="icon" href="../assets/icon.png">
+    <link rel="stylesheet" href="../style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="../highlight/styles/night-owl.min.css">
+    <script src="../highlight/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
+  </head>
+  <body>
+    <ul class="headerBar">
+      <li class="headerli"><a href="../index.html">Home</a></li>
+      <li class="headerli"><a href="../blog.html">Blog</a></li>
+      <li class="headerli"><a href="../projects.html">Projects</a></li>
+      <li class="headerli"><a href="../about.html">About</a></li>
+    </ul>
+    <h1>A Fast and Simple Particle System, Part 2</h1>
+    <ol>
+      <li>Introduction</li>
+      <li>Vertex Shader</li>
+      <li>Index List and Indirect Drawing</li>
+      <li>Particle Culling</li>
+      <li>Compaction</li>
+      <li>SoA Layout</li>
+      <li>Shared Memory</li>
+      <li>Future Work</li>
+    </ol>
+    <h2>Introduction</h2>
+    <p>
+      The previous post in the series discussed motivation, and basic implementations (CPU and GPU) of a 2D particle system. Here, we will discuss optimizations.
+    </p>
+    <h2>Compaction</h2>
+    <p>
+      I didn't use the word "compression" because it might give the impression that we'll be implementing a compression algorithm. Anyways, you might've noticed by now that we're wasting quite a bit of space with the current particle struct layout. Currently, each particle instance uses 80 bytes of memory.
+    </p>
+    <pre><code class="language-glsl">
+struct Particle
+{
+ vec4 position;
+ vec4 velocity;
+ vec4 acceleration;
+ vec4 color;
+ vec2 scale;
+ float life;
+ int padding_01;
+};
+    </code></pre>
+    <p>
+      For one, <code>position</code>, <code>velocity</code>, and <code>acceleration</code> waste a float each for the sake of alignment. Second, we probably don't need a full 32-bit float for storing velocity and acceleration. Scale also doesn't need very much precision. It will be in [.01, 10] practically 100% of the time. With this in mind, I think we can do with just <a href="https://en.wikipedia.org/wiki/Half-precision_floating-point_format#IEEE_754_half-precision_binary_floating-point_format:_binary16" class="link">3.3 decimal digits of precison</a> with no major loss in quality by using half floats. Similarly, <code>color</code> does not need to be four full-precision floats. Since it stores diffuse RGB and alpha, we can use regular normalized 8-bit unsigned integers.
+    </p>
+    <p>
+      Here's the improved result:
+    </p>
+    <pre><code class="language-glsl">
+struct Particle
+{
+  // .w unused (padding ☹️)
+  vec4 position;
+
+  // unpackHalf2x16 x 3 to access vel/accel, uintBitsToFloat(.w) to access life
+  uvec4 velocity_acceleration_life;
+
+  // unpackHalf2x16 to access scale, unpackUnorm4x8 to access color
+  uvec2 packedScale_packedColor;
+
+  // two hidden words of padding O_o
+};
+    </code></pre>
+    <p>
+      It ain't pretty, but we managed to reduce the size of our data by half to 40 bytes. Ignoring the hidden alignment, I'd say that's pretty good! This should give us a substantial improvement in update and rendering times because we can utilize our limited bandwidth more efficiently.
+    </p>
+    <p>
+      Now, why did I ignore that hidden alignment? Because there is another optimization that can be made with regards to the layout that will let us ignore it and give other gains.
+    </p>
+    <h2>SoA Layout</h2>
+    <p>
+      The big daddy of data-oriented programming appears once again.
+    </p>
+    <h2>Future Work</h2>
+    <p>
+      We aren't at the end of the optimizations that could be made.
+      TODO: mention emitter frustum culling, precise per-particle culling, SW rasterization for small particles (mention Nanite), adding more particle attributes (like rotation, angular velocity), culling precipitation with shadow map
+    </p>
+  </body>
+</html>

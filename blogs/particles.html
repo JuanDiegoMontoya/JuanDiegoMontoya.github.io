@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
   <head>
-    <title>Particles</title>
+    <title>Particles I</title>
     <link rel="icon" href="../assets/icon.png">
     <link rel="stylesheet" href="../style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,17 +16,33 @@
       <li class="headerli"><a href="../projects.html">Projects</a></li>
       <li class="headerli"><a href="../about.html">About</a></li>
     </ul>
-    <h1>A Fast and Simple Particle System</h1>
+    <h1>A Fast and Simple Particle System, Part 1</h1>
+    <img src="https://i.imgur.com/ykOuFZs.jpeg">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li>Introduction</li>
+      <li>Naive CPU Implementation</li>
+      <li>Naive GPU Implementation</li>
+      <li>Project Code</li>
+    </ol>
     <h2>Introduction</h2>
     <p>
-      This post will cover the architecture of the particle system implemented in my cleverly-named game engine, 
-      <a style="white-space:nowrap" class="link" href="https://github.com/JuanDiegoMontoya/Gengine">Gengine</a>
+      Welcome to the first of a two-part series about implementing and optimizing the particle system implemented in my cleverly-named game engine, <a class="link" href="https://github.com/JuanDiegoMontoya/Gengine">Gengine</a>. This post (part 1) will cover motivation, architecture, and a basic implementation.
     </p>
     <p>
       Why do we want particles?<br>
+      According to <a style="white-space:nowrap" class="link" href="https://en.wikipedia.org/wiki/Particle_system">Wikipedia</a>, particles are used to simulate various "fuzzy" phenomena. In my case, I was looking for a way of cheaply handling effects like rain, fire, smoke, and digging effects, while still being visually plausible. Specifically, I wanted:
     </p>
+    <ul>
+      <li>Millions of particles updated and rendered every frame</li>
+      <li>Dozens of particle emitters, with the ability to handle hundreds if needed</li>
+      <li>Scalable performance. Low end machines shouldn't die because I wanted fancy particles</li>
+      <li>The base case, 1 million precipitation particles, should take no longer than one millisecond to update and render on low/mid-range GPUs (like the 1060 I'm developing on). There should be no sacrifices made to support particles</li>
+      <li>Position, velocity, acceleration, scale, tint color, lifetime, and texture (per emitter) should be the bare minimum supported particle attributes, with flexibility to add more</li>
+      <li>Collision will not be necessary</li>
+    </ul>
     <p>
-      Next, I will emulate a naive attempt to make a CPU-driven particle system that uses instancing to optimize rendering. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly.
+      Next, I will emulate a realistic naive attempt to make a CPU-driven particle system that leverages instancing. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly. I also intentionally omit details like handling particle creation to keep the snippet brief.
     </p>
     <pre><code class="language-cpp">
 struct Particle {
@@ -68,12 +84,12 @@ void RenderEmitter(const ParticleEmitter& emitter) {
 }
     </code></pre>
     <p>
-      I intentionally left out some detail, like handling particle creation, to keep the code brief. This approach is simple, and may even be sufficient in many cases. For us, the drawbacks are too great.
+      In practice, particle handling code will be more complicated than this. This approach is simple, and may even be sufficient in many cases. For us, the drawbacks are too great.
     </p>
     <ul>
       <li>
         Mapping a buffer every time an emitter is updated introduces a sync point in non-explicit APIs (OpenGL and D3D11), as the driver must wait for the buffer to no longer be in use on the GPU before giving you a pointer you can write to. This manifests as a bubble in activity on both the CPU and the GPU timeline. This phenomenon is also known as a <a href="https://shawnhargreaves.com/blog/stalling-the-pipeline.html" class="link">pipeline stall</a>.
-      </li>
+     </li>
       <li>
         In explicit APIs, or if you use persistent mapping in OpenGL, you must do additional work to ensure the buffer region is not being used on the GPU before you write. This entails N-buffering your particle data (increasing memory footprint) and/or using sync objects to manually synchronize GPU reads and CPU writes.
       </li>
@@ -81,6 +97,10 @@ void RenderEmitter(const ParticleEmitter& emitter) {
         Even though the update method is simple, it can be a huge amount of work for a single thread to update all the particles of an emitter. One of the goals, after all, is to be able to have millions of particles!
       </li>
     </ul>
+    <figure>
+      <img src="../assets/pipeline_stall.png" class="center" style="max-width: 90%;">
+      <figcaption>A graphics programmer's worst nightmare realized because you call glMapBuffer every frame</figcaption>
+    </figure>
     <p>
       What can we do about these problems? Let's take a closer look to see what the code is doing here and analyze our needs.
     </p>
@@ -90,15 +110,15 @@ void RenderEmitter(const ParticleEmitter& emitter) {
       <li>The data lives on the GPU and is consumed by the GPU.</li>
     </ul>
     <p>
-      Very interesting. We know a tool that is great for concurrently operating on multiple data at once. It's called using multiple threads! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, we still have the glaring issue of synchronization, given that the data lives on the GPU, far away from the CPU. If only there was a way to execute arbitrary code on the GPU, the most powerful parallel processor available to consumer PCs...
+      Very interesting. We know a tool that is great for concurrently processing data. It's called multithreading! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, the data still lives far, far away from the CPU, requiring that we synchronize access. If only there was a way to execute arbitrary code on the GPU, the most powerful parallel processor available to consumer PCs...
     </p>
-    <h2>Enter Compute Shaders</h2>
+    <h2>Compute Shaders</h2>
     <p>
       As you might've guessed, compute shaders are the perfect tool for this task.
     </p>
     <h2>Compute Shader Limitations</h2>
     <p>
-      It would be remiss to use compute shaders without considering their drawbacks.
+      It would be remiss to use compute shaders without considering their drawbacks. By going with a compute shader-based solution, we lose the ability to manipulate particles in a fine-grained way. Handling collision with terrain becomes extremely difficult. Using compute shaders to update particles also means we will be taking a slice of the precious GPU timeline. In a GPU-bound application, this can mean that we actually decrease performance by using compute shaders (depending on the number of particles)! Another thing we must consider when using compute shaders is <i>where</i> in the timeline they appear. Without async compute
     </p>
     <h2>Architecture</h2>
     <p>
@@ -134,12 +154,12 @@ struct ParticleEmitter
     <pre><code class="language-cpp">
 struct InternalEmitterData
 {
-  Buffer particleSharedDataBuffer{};
-  Buffer particleUpdateDataBuffer{};
-  Buffer particleRenderDataBuffer{};
-  Buffer freeStackBuffer{};
-  Buffer indirectDrawBuffer{};
-  Buffer indicesBuffer{};
+  Buffer particleSharedDataBuffer;
+  Buffer particleUpdateDataBuffer;
+  Buffer particleRenderDataBuffer;
+  Buffer freeStackBuffer;
+  Buffer indirectDrawBuffer;
+  Buffer indicesBuffer;
   TextureView textureView;
   TextureSampler textureSampler;
   uint32_t maxParticles{}; // "const"
@@ -147,9 +167,11 @@ struct InternalEmitterData
   float timer{ 0.0f };
 };
     </code></pre>
-    <video controls class="center">
-      <source src="https://giant.gfycat.com/AptNiceEgg.mp4" type="video/mp4">
-    </video>
-    <div class="caption">10 million dynamic particles at 90+ FPS on a GTX 1060. This is what we'll be working towards. </div>
+    <figure>
+      <video controls class="center">
+        <source src="https://giant.gfycat.com/MeanImpoliteHomalocephale.mp4" type="video/mp4">
+      </video>
+      <figcaption>10 million dynamic particles at 100 FPS on a GTX 1060. This is what we'll be working towards. </figcaption>
+    </figure>
   </body>
 </html>
