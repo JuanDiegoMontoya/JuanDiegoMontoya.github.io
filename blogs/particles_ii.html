@@ -48,7 +48,7 @@ struct Particle
 };
     </code></pre>
     <p>
-      For one, <code>position</code>, <code>velocity</code>, and <code>acceleration</code> waste a float each for the sake of alignment. Second, we probably don't need a full 32-bit float for storing velocity and acceleration. Scale also doesn't need very much precision. It will be in [.01, 10] practically 100% of the time. With this in mind, I think we can do with just <a href="https://en.wikipedia.org/wiki/Half-precision_floating-point_format#IEEE_754_half-precision_binary_floating-point_format:_binary16" class="link">3.3 decimal digits of precison</a> with no major loss in quality by using half floats. Similarly, <code>color</code> does not need to be four full-precision floats. Since it stores diffuse RGB and alpha, we can use regular normalized 8-bit unsigned integers.
+      For one, <code>position</code>, <code>velocity</code>, and <code>acceleration</code> each waste a float for the sake of alignment. Second, we probably don't need a full 32-bit float for storing velocity and acceleration. Scale also doesn't need very much precision as it will be in very small range near zero practically 100% of the time. With this in mind, I think we can do with just <a href="https://en.wikipedia.org/wiki/Half-precision_floating-point_format#IEEE_754_half-precision_binary_floating-point_format:_binary16" class="link">3.3 decimal digits of precison</a> with no major loss in quality by using half floats. Similarly, <code>color</code> does not need to be four full-precision floats. Since it stores diffuse RGB and alpha, we can use regular normalized 8-bit unsigned integers.
     </p>
     <p>
       Here's the improved result:
@@ -56,7 +56,7 @@ struct Particle
     <pre><code class="language-glsl">
 struct Particle
 {
-  // .w unused (padding ☹️)
+  // .w unused (padding)
   vec4 position;
 
   // unpackHalf2x16 x 3 to access vel/accel, uintBitsToFloat(.w) to access life
@@ -65,7 +65,7 @@ struct Particle
   // unpackHalf2x16 to access scale, unpackUnorm4x8 to access color
   uvec2 packedScale_packedColor;
 
-  // two hidden words of padding O_o
+  // eight hidden bytes of padding O_o
 };
     </code></pre>
     <p>
@@ -76,12 +76,12 @@ struct Particle
     </p>
     <h2>SoA Layout</h2>
     <p>
-      The big daddy of data-oriented programming appears once again.
+      The big daddy of data-oriented programming appears once again. So, why would we care about organizing our data into a struct of arrays instead of one array containing all of the data for a particle? To answer that question, let's take a look at how our memory access pattern utilizes the GPU's cache.
     </p>
     <h2>Future Work</h2>
     <p>
       We aren't at the end of the optimizations that could be made.
-      TODO: mention emitter frustum culling, precise per-particle culling, SW rasterization for small particles (mention Nanite), adding more particle attributes (like rotation, angular velocity), culling precipitation with shadow map
+      TODO: mention emitter frustum culling, precise per-particle culling, SW rasterization for small particles (mention Nanite), adding more particle attributes (like rotation, angular velocity), culling precipitation with shadow map, etc.
     </p>
   </body>
 </html>
