@@ -31,6 +31,46 @@
     <p>
       The previous post in the series discussed motivation, and basic implementations (CPU and GPU) of a 2D particle system. Here, we will discuss optimizations.
     </p>
+    <h2>Vertex Shader</h2>
+    <p>
+      We started off with a simplistic approach to drawing these particles.
+    </p>
+    <pre><code class="language-glsl">
+#version 460 core
+
+#include "particle.h"
+
+layout(std430, binding = 0) readonly restrict buffer Particles
+{
+    Particle particles[];
+};
+
+layout(location = 0) in vec3 aPos;
+
+layout(location = 0) uniform mat4 u_viewProj;
+layout(location = 1) uniform vec3 u_cameraRight;
+layout(location = 2) uniform vec3 u_cameraUp;
+
+layout(location = 0) out vec2 vTexCoord;
+layout(location = 1) out vec4 vColor;
+
+void main()
+{
+    vTexCoord = CreateQuad(gl_VertexID);
+    vec2 aPos = vTexCoord - 0.5;
+
+    int index = gl_InstanceID;
+
+    Particle particle = particles[index];
+
+    vec3 vertexPosition_worldspace =
+        particle.position.xyz +
+        u_cameraRight * aPos.x * particle.scale.x +
+        u_cameraUp * aPos.y * particle.scale.y;
+
+    gl_Position = u_viewProj * vec4(vertexPosition_worldspace, 1.0);
+}
+    </code></pre>
     <h2>Compaction</h2>
     <p>
       I didn't use the word "compression" because it might give the impression that we'll be implementing a compression algorithm. Anyways, you might've noticed by now that we're wasting quite a bit of space with the current particle struct layout. Currently, each particle instance uses 80 bytes of memory.
@@ -38,17 +78,20 @@
     <pre><code class="language-glsl">
 struct Particle
 {
- vec4 position;
- vec4 velocity;
- vec4 acceleration;
- vec4 color;
- vec2 scale;
- float life;
- int padding_01;
+    vec4 position;
+    vec4 velocity;
+    vec4 acceleration;
+    vec4 color;
+    vec2 scale;
+    float life;
+    int padding_01;
 };
     </code></pre>
     <p>
-      For one, <code>position</code>, <code>velocity</code>, and <code>acceleration</code> each waste a float for the sake of alignment. Second, we probably don't need a full 32-bit float for storing velocity and acceleration. Scale also doesn't need very much precision as it will be in very small range near zero practically 100% of the time. With this in mind, I think we can do with just <a href="https://en.wikipedia.org/wiki/Half-precision_floating-point_format#IEEE_754_half-precision_binary_floating-point_format:_binary16" class="link">3.3 decimal digits of precison</a> with no major loss in quality by using half floats. Similarly, <code>color</code> does not need to be four full-precision floats. Since it stores diffuse RGB and alpha, we can use regular normalized 8-bit unsigned integers.
+      For one, <code>position</code>, <code>velocity</code>, and <code>acceleration</code> each waste a float for the sake of alignment. Second, we probably don't need a full 32-bit float for storing velocity and acceleration. Scale also doesn't need very much precision as it will be in very small range near zero practically 100% of the time.
+    </p>
+    <p>
+      With that in mind, I think we can do with just <a href="https://en.wikipedia.org/wiki/Half-precision_floating-point_format#IEEE_754_half-precision_binary_floating-point_format:_binary16" class="link">3.3 decimal digits of precison</a> with no major loss in quality by using half floats. Similarly, <code>color</code> does not need to be four full-precision floats. Since it stores diffuse RGB and alpha, we can use regular normalized 8-bit unsigned integers easily. We'll be taking advantage of GLSL's packing and unpacking functions to make this work.
     </p>
     <p>
       Here's the improved result:
@@ -56,16 +99,16 @@ struct Particle
     <pre><code class="language-glsl">
 struct Particle
 {
-  // .w unused (padding)
-  vec4 position;
+    // .w unused (padding)
+    vec4 position;
 
-  // unpackHalf2x16 x 3 to access vel/accel, uintBitsToFloat(.w) to access life
-  uvec4 velocity_acceleration_life;
+    // unpackHalf2x16 x 3 to access vel/accel, uintBitsToFloat(.w) to access life
+    uvec4 velocity_acceleration_life;
 
-  // unpackHalf2x16 to access scale, unpackUnorm4x8 to access color
-  uvec2 packedScale_packedColor;
+    // unpackHalf2x16 to access scale, unpackUnorm4x8 to access color
+    uvec2 packedScale_packedColor;
 
-  // eight hidden bytes of padding O_o
+    // eight hidden bytes of padding O_o
 };
     </code></pre>
     <p>
@@ -76,8 +119,51 @@ struct Particle
     </p>
     <h2>SoA Layout</h2>
     <p>
-      The big daddy of data-oriented programming appears once again. So, why would we care about organizing our data into a struct of arrays instead of one array containing all of the data for a particle? To answer that question, let's take a look at how our memory access pattern utilizes the GPU's cache.
+      The big daddy of data-oriented programming appears once again. So, why would we care about organizing our data into a struct of arrays instead of one array containing all of the data for a particle? To answer that question, let's take a look at how our memory access pattern utilizes the L1 cache. Here, we pretend a cache line is 64 bytes. This is true for some architectures, like GCN, but not for others. The same concepts apply for the others.
     </p>
+    <img src="https://i.imgur.com/ez6N68V.png">
+    <p>
+      This is how the caches are organized when we access six particle instances in one thread. Note that each particle requires 56.25% (36/64 bytes) of a cache line, so about every 1.8 particles read, there is a cache miss. Well, if we use all of the data we fetch in the cache, then we have no choice but to accept this cost. Well, let's take a look at the data we access in the particle update shader. (Yes, I'm ignoring that position needs a fourth component for alignment. It is omitted here for simplicity)
+    </p>
+    <img src="https://i.imgur.com/BZtOVOy.png">
+    <p>
+      It looks like we're wasting eight whole bytes of cache per particle we read because the scale and color remain constant. That is 29% more cache misses than necessary.
+    </p>
+    <img src="https://i.imgur.com/gFJGtwZ.png">
+    <p>
+      The case is even worse for the vertex shader. Nearly half the data fetched is wasted as we only need position, scale, and color for rendering.
+    </p>
+    <p>
+      The solution to this problem is hinted at by the name of this section: <strong>SoA Layout</strong>. By separating particle data into different arrays based on access, we can make maximum use of the caches provided to us.
+    </p>
+    <pre><code class="language-glsl">
+// accessed in update and vertex shader
+struct ParticleSharedData
+{
+    vec4 position;
+};
+
+// accessed in update shader only
+struct ParticleUpdateData
+{
+    uvec4 velocity_acceleration_life;
+};
+
+// accessed in vertex shader only
+struct ParticleRenderData
+{
+    uvec2 scaleX_colorY;
+};
+    </code></pre>
+    <p>
+      And how this looks in memory when packed into separate buffers...
+    </p>
+    <img src="https://i.imgur.com/1wm2eoB.png">
+    <p>
+      Now, getting efficient cache behavior is as simple as fetching only the data we require in a shader.
+    </p>
+    <img src="https://i.imgur.com/JyHamxP.png">
+    <img src="https://i.imgur.com/i2cfNKN.png">
     <h2>Future Work</h2>
     <p>
       We aren't at the end of the optimizations that could be made.

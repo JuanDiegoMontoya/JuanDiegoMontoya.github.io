@@ -25,9 +25,14 @@ img, video, figure {
   width: 100%;
 }
 
-p, pre, h2, video, img, ul, figure {
+p, pre, h2, video, ul, figure {
   max-width: 800px;
   margin: 2em auto;
+}
+
+img {
+  max-width: 800px;
+  margin: 0em auto;
 }
 
 pre {
