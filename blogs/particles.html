@@ -171,6 +171,59 @@ struct InternalEmitterData
   float timer{ 0.0f };
 };
     </code></pre>
+    <p>
+      Here is the vertex shader used to draw billboard particles.
+    </p>
+    <pre><code>
+#version 460 core
+
+#include "particle.h"
+
+layout(std430, binding = 0) readonly restrict buffer Particles {
+    Particle particles[];
+};
+
+layout(location = 0) in vec2 aPos; // in [-0.5, 0.5]
+
+layout(location = 0) uniform mat4 u_viewProj;
+layout(location = 1) uniform vec3 u_cameraRight;
+layout(location = 2) uniform vec3 u_cameraUp;
+
+layout(location = 0) out vec2 vTexCoord;
+layout(location = 1) out vec4 vColor;
+
+void main() {
+    vTexCoord = aPos + 0.5;
+
+    int index = gl_InstanceID;
+
+    Particle particle = particles[index];
+
+    vec3 vertexPosition_worldspace =
+        particle.position.xyz +
+        u_cameraRight * aPos.x * particle.scale.x +
+        u_cameraUp * aPos.y * particle.scale.y;
+
+    gl_Position = u_viewProj * vec4(vertexPosition_worldspace, 1.0);
+}
+    </code></pre>
+    <p>
+      The fragment shader is dead simple.
+    </p>
+    <pre><code>
+#version 460 core
+layout (location = 0) in vec2 vTexCoord;
+layout (location = 1) in vec4 vColor;
+
+layout (location = 3, binding = 0) uniform sampler2D u_sprite;
+
+layout (location = 0) out vec4 fragColor;
+
+void main()
+{
+    fragColor = texture(u_sprite, vTexCoord) * vColor;
+}
+    </code></pre>
     <figure>
       <video controls class="center">
         <source src="https://giant.gfycat.com/MeanImpoliteHomalocephale.mp4" type="video/mp4">

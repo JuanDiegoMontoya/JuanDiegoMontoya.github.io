@@ -33,47 +33,52 @@
     </p>
     <h2>Vertex Shader</h2>
     <p>
-      We started off with a simplistic approach to drawing these particles.
+      What if we didn't have to read any vertex data in our vertex shader?
     </p>
     <pre><code class="language-glsl">
 #version 460 core
 
-#include "particle.h"
-
-layout(std430, binding = 0) readonly restrict buffer Particles
-{
-    Particle particles[];
-};
-
-layout(location = 0) in vec3 aPos;
-
-layout(location = 0) uniform mat4 u_viewProj;
-layout(location = 1) uniform vec3 u_cameraRight;
-layout(location = 2) uniform vec3 u_cameraUp;
+... // declarations
 
 layout(location = 0) out vec2 vTexCoord;
-layout(location = 1) out vec4 vColor;
 
-void main()
-{
+// triangle fan with vertices in [0, 1]
+// 0x3 == 0b1100
+// 0x9 == 0b1001
+// `b` selects which two bits will be used
+vec2 CreateQuad(in uint vertexID) {
+    uint b = 1 &lt&lt vertexID;
+    return vec2((0x3 & b) != 0, (0x9 & b) != 0);
+}
+
+void main() {
     vTexCoord = CreateQuad(gl_VertexID);
     vec2 aPos = vTexCoord - 0.5;
 
-    int index = gl_InstanceID;
-
-    Particle particle = particles[index];
-
-    vec3 vertexPosition_worldspace =
-        particle.position.xyz +
-        u_cameraRight * aPos.x * particle.scale.x +
-        u_cameraUp * aPos.y * particle.scale.y;
-
-    gl_Position = u_viewProj * vec4(vertexPosition_worldspace, 1.0);
+    ... // calculate gl_Position
 }
     </code></pre>
+    <p>
+      We use the clever technique of encoding vertex positions into consecutive bits inspired by <a href="https://twitter.com/Donzanoid/status/616370134278606848" class="link">this post</a>. Invoking the shader remains simple as before.
+    </p>
+    <pre><code>
+void BeginRenderParticleEmitters() {
+    /* bind shader, set uniforms */
+    glBindVertexArray(emptyVAO); // no vertex attributes needed!
+}
+
+void RenderParticleEmitter(const ParticleEmitter& emitter) {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, emitter.particleBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0);
+    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, emitter.numParticles);
+}
+    </code></pre>
+    <p>
+      This isn't necessarily a performance optimization, as we may be subverting the hardware's post-transform cache, or, more precisely, <a href="https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_351.pdf" class="link">a form of batching</a>. The performance benefits are mostly theoretical, as fan primitives contain enough information to get the same vertex reuse benefits as indexed drawing. More obvious is that we can avoid the memory access required for reading a vertex and index buffer.
+    </p>
     <h2>Compaction</h2>
     <p>
-      I didn't use the word "compression" because it might give the impression that we'll be implementing a compression algorithm. Anyways, you might've noticed by now that we're wasting quite a bit of space with the current particle struct layout. Currently, each particle instance uses 80 bytes of memory.
+      You might've noticed by now that we're wasting quite a bit of space with the current particle struct layout. Currently, each particle instance is 80 bytes.
     </p>
     <pre><code class="language-glsl">
 struct Particle
