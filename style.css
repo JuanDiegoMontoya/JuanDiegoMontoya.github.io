@@ -16,6 +16,10 @@ body {
   margin: 2em auto;
 }
 
+code {
+  background-color: rgb(9, 43, 94);
+}
+
 h1 {
   color: rgb(255, 255, 255);
   text-align: center;

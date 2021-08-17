@@ -29,7 +29,7 @@
     </ol>
     <h2>Introduction</h2>
     <p>
-      The previous post in the series discussed motivation, and basic implementations (CPU and GPU) of a 2D particle system. Here, we will discuss optimizations.
+      The previous post in the series discussed motivation, and basic implementations (CPU and GPU) of a billboard particle system for 3D games. Here, we will discuss optimizations.
     </p>
     <h2>Vertex Shader</h2>
     <p>
@@ -63,18 +63,93 @@ void main() {
     </p>
     <pre><code>
 void BeginRenderParticleEmitters() {
-    /* bind shader, set uniforms */
+    glUseProgram(particleShader);
+    /* set uniforms */
     glBindVertexArray(emptyVAO); // no vertex attributes needed!
 }
 
 void RenderParticleEmitter(const ParticleEmitter& emitter) {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, emitter.particleBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0);
-    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, emitter.numParticles);
+    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, emitter.maxParticles);
 }
     </code></pre>
     <p>
-      This isn't necessarily a performance optimization, as we may be subverting the hardware's post-transform cache, or, more precisely, <a href="https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_351.pdf" class="link">a form of batching</a>. The performance benefits are mostly theoretical, as fan primitives contain enough information to get the same vertex reuse benefits as indexed drawing. More obvious is that we can avoid the memory access required for reading a vertex and index buffer.
+      This isn't necessarily a performance optimization, as we may be subverting the hardware's post-transform cache, or, more precisely, <a href="https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_351.pdf" class="link">a form of batching</a>. The performance benefits are admittedly theoretical, but fan primitives contain enough information to get the same vertex reuse benefits as indexed drawing. However, we can say with certainty that are avoiding the memory access required for reading a vertex and index buffer, which has a cost of its own.
+    </p>
+    <h2>Index List and Indirect Drawing</h2>
+    <p>
+      One inefficiency caused by moving to a GPU-driven solution is that the CPU no longer knows how many particles are alive at a time. To account for this, we always draw the maximum number of particles an emitter holds, then discard primitives in the vertex shader (by outputting degenerate triangles).
+    </p>
+    <p>
+      Modern graphics APIs allow us to solve this problem by introducing a concept called <a href="https://www.khronos.org/opengl/wiki/Vertex_Rendering#Indirect_rendering" class="link">indirect rendering</a>, which allows the driver to source draw arguments from a buffer on the GPU. On its own this won't help us, because our particles are not ordered. Consider the case where some particles die.
+    </p>
+    <img src="https://i.imgur.com/oD66ba9.png">
+    <img src="https://i.imgur.com/ZrkUefd.png">
+    <p>
+      You can see that even if we know the number of particles that are alive, we do not know where they are. The solution to this problem is, as usual, <a href="https://en.wikipedia.org/wiki/Fundamental_theorem_of_software_engineering" class="link">an extra level of indirection</a>.
+    </p>
+    <p>
+      We introduce a buffer called <code>drawIndices</code> which holds the indices of particles to be drawn that frame. The buffer appears in the update shader as such:
+    </p>
+    <pre><code class="language-glsl">layout(std430, binding = 5) restrict buffer Drawindices {
+    uint drawIndices[];
+};  </code></pre>
+    <p>
+      Being an append/stack-style buffer, you may be wondering where the count is located. It can be found in the <code>instanceCount</code> field of the indirect draw buffer.
+    </p>
+    <pre><code class="language-glsl">struct DrawArraysCommand {
+  uint count;
+  uint instanceCount;
+  uint first;
+  uint baseInstance;
+};
+
+layout(std430, binding = 4) coherent restrict buffer IndirectCommand {
+  DrawArraysCommand indirectCommand;
+};  </code></pre>
+    <p>
+      Every frame before updating particles, we clear the instance count on the CPU. This is trivial in any API and does not introduce a sync point.
+    </p>
+    <pre><code class="language-glsl">uint32_t zero{ 0 };
+glClearNamedBufferSubData(emitter.indirectDrawBuffer, GL_R32UI,
+                          offsetof(DrawArraysIndirectCommand, instanceCount),
+                          sizeof(uint32_t), GL_RED, GL_UNSIGNED_INT, &zero);</code></pre>
+    <p>
+      Then, in the update shader, we can append to the buffer when a particle is alive this frame.
+    </p>
+    <pre><code class="language-glsl">
+void UpdateParticle(inout Particle particle, int i) {
+    if (particle.life &lt= 0.0)
+      return;
+
+    particle.velocity += particle.acceleration * u_dt;
+    particle.position += particle.velocity * u_dt;
+    particle.life -= u_dt;
+    if (particle.life &lt= 0.0) { // particle died this frame
+        int freeIndex = atomicAdd(freeCount, 1);
+        freeIndices[freeIndex] = i;
+    }
+    // ## NEW ##
+    else { // particle is alive, so we will render it (add its index to drawIndices)
+        uint drawIndex = atomicAdd(indirectCommand.instanceCount, 1);
+        drawIndices[drawIndex] = i;
+    }
+}
+    </code></pre>
+    <p>
+      Finally, in the vertex shader, we use <code>gl_InstanceID</code> to index our draw indices rather than indexing the particle buffer directly.
+    </p>
+    <pre><code class="language-glsl">Particle particle = particles[drawIndices[gl_InstanceID]];</code></pre>
+    <p>
+      With this, we gained the ability to select which particles are drawn on a per-particle basis. However, we actually introduced a problem with this! With the extra layer of indirection, we have made it so that the vertex shader no longer accesses the particle array in a predictable manner, as two adjacent indices may point to any particle in the array. When nearly all particles are alive, we do not get much benefit from using indices, and the incoherent accesses will cause more cache misses than before.
+    </p>
+    <p>
+      We will see in the next section how we gain much more than we lose with this
+    </p>
+    <h2>Particle Culling</h2>
+    <p>
+
     </p>
     <h2>Compaction</h2>
     <p>
@@ -104,8 +179,10 @@ struct Particle
     <pre><code class="language-glsl">
 struct Particle
 {
-    // .w unused (padding)
-    vec4 position;
+    // accessed as normal
+    vec3 position;
+
+    // four bytes of padding
 
     // unpackHalf2x16 x 3 to access vel/accel, uintBitsToFloat(.w) to access life
     uvec4 velocity_acceleration_life;
@@ -124,11 +201,11 @@ struct Particle
     </p>
     <h2>SoA Layout</h2>
     <p>
-      The big daddy of data-oriented programming appears once again. So, why would we care about organizing our data into a struct of arrays instead of one array containing all of the data for a particle? To answer that question, let's take a look at how our memory access pattern utilizes the L1 cache. Here, we pretend a cache line is 64 bytes. This is true for some architectures, like GCN, but not for others. The same concepts apply for the others.
+      The big daddy of data-oriented programming appears once again. So, why would we care about organizing our data into a struct of arrays instead of one array containing all of the data for a particle? To answer that question, let's take a look at how our memory access pattern utilizes the L1 cache. Here, we pretend a cache line is 64 bytes. This is true for some architectures, like GCN, but not for others. The same concepts apply in any case.
     </p>
     <img src="https://i.imgur.com/ez6N68V.png">
     <p>
-      This is how the caches are organized when we access six particle instances in one thread. Note that each particle requires 56.25% (36/64 bytes) of a cache line, so about every 1.8 particles read, there is a cache miss. Well, if we use all of the data we fetch in the cache, then we have no choice but to accept this cost. Well, let's take a look at the data we access in the particle update shader. (Yes, I'm ignoring that position needs a fourth component for alignment. It is omitted here for simplicity)
+      We need to fetch four cache lines in order to access six particle instances in one thread. Note that each particle requires 56.25% (36/64 bytes) of a cache line, so about every 1.8 particles read, there is a cache miss. Well, if we use all of the data we fetch in the cache, then we have no choice but to accept this cost. Well, let's take a look at the data we access in the particle update shader. (I'm ignoring that position needs a fourth component for alignment. It is omitted here for simplicity)
     </p>
     <img src="https://i.imgur.com/BZtOVOy.png">
     <p>
@@ -141,25 +218,20 @@ struct Particle
     <p>
       The solution to this problem is hinted at by the name of this section: <strong>SoA Layout</strong>. By separating particle data into different arrays based on access, we can make maximum use of the caches provided to us.
     </p>
-    <pre><code class="language-glsl">
-// accessed in update and vertex shader
-struct ParticleSharedData
-{
-    vec4 position;
+    <pre><code class="language-glsl">// accessed in update and vertex shader
+struct ParticleSharedData {
+    vec3 position;
 };
 
 // accessed in update shader only
-struct ParticleUpdateData
-{
+struct ParticleUpdateData {
     uvec4 velocity_acceleration_life;
 };
 
 // accessed in vertex shader only
-struct ParticleRenderData
-{
+struct ParticleRenderData {
     uvec2 scaleX_colorY;
-};
-    </code></pre>
+};  </code></pre>
     <p>
       And how this looks in memory when packed into separate buffers...
     </p>
