@@ -17,26 +17,27 @@
       <li class="headerli"><a href="../about.html">About</a></li>
     </ul>
     <h1>A Fast and Simple Particle System, Part 2</h1>
+    <h2>Table of Contents</h2>
     <ol>
-      <li>Introduction</li>
-      <li>Vertex Shader</li>
-      <li>Index List and Indirect Drawing</li>
-      <li>Particle Culling</li>
-      <li>Compaction</li>
-      <li>SoA Layout</li>
-      <li>Shared Memory</li>
-      <li>Future Work</li>
+      <li><a href="#1" class="link">Introduction</a></li>
+      <li><a href="#2" class="link">Vertex Shader</a></li>
+      <li><a href="#3" class="link">Index List and Indirect Drawing</a></li>
+      <li><a href="#4" class="link">Particle Culling</a></li>
+      <li><a href="#5" class="link">Compaction</a></li>
+      <li><a href="#6" class="link">SoA Layout</a></li>
+      <li><a href="#7" class="link">Shared Memory</a></li>
+      <li><a href="#9" class="link">Code</a></li>
+      <li><a href="#8" class="link">Future Work</a></li>
     </ol>
-    <h2>Introduction</h2>
+    <h2 id="1">Introduction</h2>
     <p>
       The previous post in the series discussed motivation, and basic implementations (CPU and GPU) of a billboard particle system for 3D games. Here, we will discuss optimizations.
     </p>
-    <h2>Vertex Shader</h2>
+    <h2 id="2">Vertex Shader</h2>
     <p>
       What if we didn't have to read any vertex data in our vertex shader?
     </p>
-    <pre><code class="language-glsl">
-#version 460 core
+    <pre><code class="language-glsl">#version 460 core
 
 ... // declarations
 
@@ -56,13 +57,11 @@ void main() {
     vec2 aPos = vTexCoord - 0.5;
 
     ... // calculate gl_Position
-}
-    </code></pre>
+}   </code></pre>
     <p>
       We use the clever technique of encoding vertex positions into consecutive bits inspired by <a href="https://twitter.com/Donzanoid/status/616370134278606848" class="link">this post</a>. Invoking the shader remains simple as before.
     </p>
-    <pre><code>
-void BeginRenderParticleEmitters() {
+    <pre><code>void BeginRenderParticleEmitters() {
     glUseProgram(particleShader);
     /* set uniforms */
     glBindVertexArray(emptyVAO); // no vertex attributes needed!
@@ -72,17 +71,16 @@ void RenderParticleEmitter(const ParticleEmitter& emitter) {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, emitter.particleBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0);
     glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, emitter.maxParticles);
-}
-    </code></pre>
+}   </code></pre>
     <p>
       This isn't necessarily a performance optimization, as we may be subverting the hardware's post-transform cache, or, more precisely, <a href="https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_351.pdf" class="link">a form of batching</a>. The performance benefits are admittedly theoretical, but fan primitives contain enough information to get the same vertex reuse benefits as indexed drawing. However, we can say with certainty that are avoiding the memory access required for reading a vertex and index buffer, which has a cost of its own.
     </p>
-    <h2>Index List and Indirect Drawing</h2>
+    <h2 id="3">Index List and Indirect Drawing</h2>
     <p>
-      One inefficiency caused by moving to a GPU-driven solution is that the CPU no longer knows how many particles are alive at a time. To account for this, we always draw the maximum number of particles an emitter holds, then discard primitives in the vertex shader (by outputting degenerate triangles).
+      One inefficiency caused by moving to a GPU-driven solution is that the CPU no longer knows how many particles are alive at a time. To account for this, we always draw the maximum number of particles an emitter holds, then discard primitives in the vertex shader (by outputting degenerate triangles) for culled particles.
     </p>
     <p>
-      Modern graphics APIs allow us to solve this problem by introducing a concept called <a href="https://www.khronos.org/opengl/wiki/Vertex_Rendering#Indirect_rendering" class="link">indirect rendering</a>, which allows the driver to source draw arguments from a buffer on the GPU. On its own this won't help us, because our particles are not ordered. Consider the case where some particles die.
+      Modern graphics APIs allow us to solve this problem by introducing a concept called <a href="https://www.khronos.org/opengl/wiki/Vertex_Rendering#Indirect_rendering" class="link">indirect rendering</a>, which allows a draw call to source its arguments from a buffer on the GPU. On its own this won't help us, because our particles are not ordered. Consider the case where some particles die.
     </p>
     <img src="https://i.imgur.com/oD66ba9.png">
     <img src="https://i.imgur.com/ZrkUefd.png">
@@ -116,10 +114,9 @@ glClearNamedBufferSubData(emitter.indirectDrawBuffer, GL_R32UI,
                           offsetof(DrawArraysIndirectCommand, instanceCount),
                           sizeof(uint32_t), GL_RED, GL_UNSIGNED_INT, &zero);</code></pre>
     <p>
-      Then, in the update shader, we can append to the buffer when a particle is alive this frame.
+      Then, in the update shader, we can append to the buffer when a particle is alive this frame much like we did with the freelist.
     </p>
-    <pre><code class="language-glsl">
-void UpdateParticle(inout Particle particle, int i) {
+    <pre><code class="language-glsl">void UpdateParticle(inout Particle particle, int i) {
     if (particle.life &lt= 0.0)
       return;
 
@@ -135,28 +132,43 @@ void UpdateParticle(inout Particle particle, int i) {
         uint drawIndex = atomicAdd(indirectCommand.instanceCount, 1);
         drawIndices[drawIndex] = i;
     }
-}
-    </code></pre>
+}   </code></pre>
     <p>
       Finally, in the vertex shader, we use <code>gl_InstanceID</code> to index our draw indices rather than indexing the particle buffer directly.
     </p>
     <pre><code class="language-glsl">Particle particle = particles[drawIndices[gl_InstanceID]];</code></pre>
     <p>
-      With this, we gained the ability to select which particles are drawn on a per-particle basis. However, we actually introduced a problem with this! With the extra layer of indirection, we have made it so that the vertex shader no longer accesses the particle array in a predictable manner, as two adjacent indices may point to any particle in the array. When nearly all particles are alive, we do not get much benefit from using indices, and the incoherent accesses will cause more cache misses than before.
+      With this, we gained the ability to select which particles are drawn on a per-particle basis. However, we actually introduced a problem with this! With the extra layer of indirection, we have made it so that the vertex shader no longer accesses the particle array in a linear manner, as two adjacent indices may point to any particle in the array. When nearly all particles are alive, we do not get much benefit from using indices, and the incoherent accesses will cause more cache misses than before.
     </p>
     <p>
-      We will see in the next section how we gain much more than we lose with this
+      We will see an additional optimization this indirection enables in the next section.
     </p>
-    <h2>Particle Culling</h2>
+    <h2 id="4">Particle Culling</h2>
     <p>
+      Because we can finely choose which particles to render, we can cull individual particles in the update shader.
+    </p>
+    <pre><code class="language-glsl">// smaller value = more permissive culling
+#define CULLING_MIN_ANGLE 0.4
 
+
+if (particle.life &lt= 0.0) { // particle died this frame
+  int freeIndex = atomicAdd(freeCount, 1);
+  freeIndices[freeIndex] = i;
+}
+// only draw the particle if it's roughly in front of the view
+// a more robust test could be used here, but this suffices for most situations
+else if (dot(u_forwardDir, normalize(particle.position.xyz - u_viewPos)) > CULLING_MIN_ANGLE) {
+    uint drawIndex = atomicAdd(indirectCommand.instanceCount, 1);
+    drawIndices[drawIndex] = i;
+}   </code></pre>
+    <p>
+      This simple addition saves us from having to render particles that are behind the view. With it, we can cheaply cull a large percentage of the particles in the scene.
     </p>
-    <h2>Compaction</h2>
+    <h2 id="5">Compaction</h2>
     <p>
       You might've noticed by now that we're wasting quite a bit of space with the current particle struct layout. Currently, each particle instance is 80 bytes.
     </p>
-    <pre><code class="language-glsl">
-struct Particle
+    <pre><code class="language-glsl">struct Particle
 {
     vec4 position;
     vec4 velocity;
@@ -165,24 +177,20 @@ struct Particle
     vec2 scale;
     float life;
     int padding_01;
-};
-    </code></pre>
+};  </code></pre>
     <p>
       For one, <code>position</code>, <code>velocity</code>, and <code>acceleration</code> each waste a float for the sake of alignment. Second, we probably don't need a full 32-bit float for storing velocity and acceleration. Scale also doesn't need very much precision as it will be in very small range near zero practically 100% of the time.
     </p>
     <p>
-      With that in mind, I think we can do with just <a href="https://en.wikipedia.org/wiki/Half-precision_floating-point_format#IEEE_754_half-precision_binary_floating-point_format:_binary16" class="link">3.3 decimal digits of precison</a> with no major loss in quality by using half floats. Similarly, <code>color</code> does not need to be four full-precision floats. Since it stores diffuse RGB and alpha, we can use regular normalized 8-bit unsigned integers easily. We'll be taking advantage of GLSL's packing and unpacking functions to make this work.
+      Instead of full precision, I think we can do with <a href="https://en.wikipedia.org/wiki/Half-precision_floating-point_format#IEEE_754_half-precision_binary_floating-point_format:_binary16" class="link">3.3 decimal digits of precison</a> by using half floats. Similarly, <code>color</code> does not need to be four full-precision floats. Since it stores diffuse RGB and alpha, we can use regular normalized 8-bit unsigned integers. We'll be taking advantage of GLSL's packing and unpacking functions to make this work.
     </p>
     <p>
       Here's the improved result:
     </p>
-    <pre><code class="language-glsl">
-struct Particle
+    <pre><code class="language-glsl">struct Particle
 {
-    // accessed as normal
-    vec3 position;
-
-    // four bytes of padding
+    // accessed as normal (.w unused)
+    vec4 position;
 
     // unpackHalf2x16 x 3 to access vel/accel, uintBitsToFloat(.w) to access life
     uvec4 velocity_acceleration_life;
@@ -191,25 +199,27 @@ struct Particle
     uvec2 packedScale_packedColor;
 
     // eight hidden bytes of padding O_o
-};
-    </code></pre>
+};  </code></pre>
     <p>
-      It ain't pretty, but we managed to reduce the size of our data by half to 40 bytes. Ignoring the hidden alignment, I'd say that's pretty good! This should give us a substantial improvement in update and rendering times because we can utilize our limited bandwidth more efficiently.
+      It ain't pretty, but we managed to reduce the size of our data by half to 40 bytes. Ignoring the hidden alignment, I'd say that's pretty good! This should give us a substantial improvement in update and rendering times because we can utilize our bandwidth and cache more efficiently.
     </p>
     <p>
       Now, why did I ignore that hidden alignment? Because there is another optimization that can be made with regards to the layout that will let us ignore it and give other gains.
     </p>
-    <h2>SoA Layout</h2>
+    <h2 id="6">SoA Layout</h2>
     <p>
       The big daddy of data-oriented programming appears once again. So, why would we care about organizing our data into a struct of arrays instead of one array containing all of the data for a particle? To answer that question, let's take a look at how our memory access pattern utilizes the L1 cache. Here, we pretend a cache line is 64 bytes. This is true for some architectures, like GCN, but not for others. The same concepts apply in any case.
     </p>
     <img src="https://i.imgur.com/ez6N68V.png">
     <p>
-      We need to fetch four cache lines in order to access six particle instances in one thread. Note that each particle requires 56.25% (36/64 bytes) of a cache line, so about every 1.8 particles read, there is a cache miss. Well, if we use all of the data we fetch in the cache, then we have no choice but to accept this cost. Well, let's take a look at the data we access in the particle update shader. (I'm ignoring that position needs a fourth component for alignment. It is omitted here for simplicity)
+      We need to fetch four cache lines in order to access six particle instances in one thread (or multiple threads in a wave). Note that each particle requires 56.25% (36/64 bytes) of a cache line, so about every 1.8 particles read, there is a cache miss. Well, if we use all of the data we fetch in the cache, then we have no choice but to accept this cost. Well, let's take a look at the data we access in the particle update shader. (I'm ignoring that position needs a fourth component for simplicity)
     </p>
     <img src="https://i.imgur.com/BZtOVOy.png">
     <p>
       It looks like we're wasting eight whole bytes of cache per particle we read because the scale and color remain constant. That is 29% more cache misses than necessary.
+    </p>
+    <p>
+      Now let's see how data access looks in the vertex shader.
     </p>
     <img src="https://i.imgur.com/gFJGtwZ.png">
     <p>
@@ -241,10 +251,125 @@ struct ParticleRenderData {
     </p>
     <img src="https://i.imgur.com/JyHamxP.png">
     <img src="https://i.imgur.com/i2cfNKN.png">
-    <h2>Future Work</h2>
+    <h2 id="7">Shared Memory</h2>
     <p>
-      We aren't at the end of the optimizations that could be made.
-      TODO: mention emitter frustum culling, precise per-particle culling, SW rasterization for small particles (mention Nanite), adding more particle attributes (like rotation, angular velocity), culling precipitation with shadow map, etc.
+      One problem we face at the moment is with our (ab)use of atomics. Currently, each thread performs one atomic increment. Atomics are not fast! Due to the incoherent nature of low-level GPU caches, they must be bypassed for atomics to function correctly (caches cannot be invalidated by other cores). This means that, at best, an atomic operation will be performed in the global L2 cache and, at worst, will happen in global memory. Ouch! Add this to the fact that atomic accesses from multiple threads must be serialized, and you have a recipe for poor performance.
     </p>
+    <p>
+      The solution to this problem of atomic overhead is to use a type of fast, on-chip memory called <strong>shared memory</strong> for atomic operations. On the RDNA 2 architecture, each dual compute unit has a local data share (LDS), giving us similar latency to the L0 cache!
+    </p>
+    <p>
+      You can see the LDS's physical proximity to the ALUs in the following image to visually understand why it is quick.
+    </p>
+    <img src="https://i.imgur.com/DzHv3br.png">
+    <p>
+      In shaders, shared memory is shared between all threads in a work group. Atomic operations can also be performed on shared memory. See where this is headed?
+    </p>
+    <p>
+      The main problem with shared memory is that since it's local to the work group, we have to devise a new strategy to use it. Previously, we would immediately get a draw index or free list index in any thread that needs to push to one of those buffers.
+    </p>
+    <p>
+      The new plan is to record in shared memory that this thread <i>wants</i> an index when it determines its particle will be freed or drawn. Later, the main thread (thread 0), will "request" (via atomic add) a region that is fit for all the threads in the group.
+    </p>
+    <p>
+      The updated shader is tricky to read, so I have replaced the unimportant bits with comments, and annotated the rest.
+    </p>
+    <pre><code class="language-glsl">
+shared int sh_freeIndex;
+shared int sh_requestedFreeIndices;
+shared uint sh_drawIndex;
+shared uint sh_requestedDrawIndices;
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+void main() {
+    // initialize shared memory in main thread
+    if (gl_LocalInvocationIndex == 0) {
+      sh_requestedFreeIndices = 0;
+      sh_requestedDrawIndices = 0;
+    }
+
+    // all threads in the group must wait for main thread to initialize shared memory
+    barrier();
+    memoryBarrierShared();
+
+    int index = int(gl_GlobalInvocationID.x) + i;
+    bool needFreeIndex = false;
+    bool needDrawIndex = false;
+    if (index &lt particlesShared.length()) {
+        // get particle attributes
+
+        if (life > 0.0) {
+            // update position and velocity
+            life -= u_dt;
+            
+            // the particle just died
+            if (life &lt= 0.0) {
+                // we need a freelist index later
+                // notice how we increment a shared atomic
+                needFreeIndex = true;
+                atomicAdd(sh_requestedFreeIndices, 1);
+            }
+            // the particle can be rendered
+            else if (dot(u_forwardDir, normalize(particle.position.xyz - u_viewPos)) > CULLING_MIN_ANGLE) {
+                // we need a drawlist index later
+                needDrawIndex = true;
+                atomicAdd(sh_requestedDrawIndices, 1);
+            }
+        }
+
+        // write particle data out to global memory
+    }
+
+    // main thread must wait for all threads to finish incrementing counters
+    barrier();
+    memoryBarrierShared();
+
+    // get the actual start of the buffer regions we need with the main thread
+    // requires just one global atomic per work group since we request many slots at once
+    if (gl_LocalInvocationIndex == 0) {
+        sh_freeIndex = atomicAdd(stack.freeCount, sh_requestedFreeIndices);
+        sh_drawIndex = atomicAdd(indirectCommand.instanceCount, sh_requestedDrawIndices);
+    }
+
+    // all threads must wait for main thread to request slots
+    barrier();
+    memoryBarrierShared();
+
+    // if we needed a freelist index, we can now get it from the memory chunk 
+    // that the main thread just requested
+    if (needFreeIndex) {
+        int freeIndex = atomicAdd(sh_freeIndex, 1);
+        stack.indices[freeIndex] = index;
+    }
+
+    // likewise, but for a drawlist index
+    if (needDrawIndex) {
+        uint drawIndex = atomicAdd(sh_drawIndex, 1);
+        drawIndices[drawIndex] = index;
+    }
+}
+    </code></pre>
+    <h2 id="9">Code</h2>
+    <p>
+      The code for this project can be found on the Gengine repository.
+      Fragment shader: <br>
+      Vertex shader: <br>
+      Particle update shader: <br>
+      Particle generation shader: <br>
+      Rendering: <br>
+      Updating: <br>
+    </p>
+    <h2 id="8">Future Work</h2>
+    <p>
+      There are still many optimizations and features that could be added.
+    </p>
+    <ul>
+      <li><strong>Per-emitter culling</strong>: frustum culling and occlusion culling can be employed to prevent emitters outside the view from being updated and rendered. A bounding box could be determined by the max distance a particle could travel from the emitter.</li>
+      <li><strong>Software rasterization</strong>: when rendering so many particles, it isn't uncommon for some to only be a few pixels large when rasterized. Such small triangles are inefficient for the hardware, as 2x2 quads are the smallest thing that can be rasterized by it. This can cause up to 75% of pixel shader work being wasted. A custom rasterizers optimized for small triangles can be implemented via compute. Then, heuristics can be employed to choose between software and hardware rasterizers for different particle sizes. This is similar to how Nanite uses both software and hardware rasterization. More info can be found <a href="https://www.elopezr.com/a-macro-view-of-nanite/" class="link">here</a>.</li>
+      <li><strong>Variable rate emitter updating</strong>: emitters could be updated less frequently the farther they are from the camera.  Self-explanatory.</li>
+      <li><strong>Shadow map precipitation culling</strong>: using a shadow map, precipitation particles can be culled so they only appear where the sky is directly overhead.</li>
+      <li><strong>More features</strong>: rotation, angular velocity, dynamic color, lighting, and 3D particles are all feasible without needing major code restructuring.</li>
+      <li><strong>Buffer coalescing</strong>: each emitter requires five buffers, which leads to excessive buffer creation and destruction with many emitters. Instead, we could allocate sections of one or more stretchy buffers. This may lead to reduced driver overhead.</li>
+    </ul>
   </body>
 </html>
