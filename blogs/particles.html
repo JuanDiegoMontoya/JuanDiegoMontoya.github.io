@@ -31,11 +31,11 @@
       Welcome to the first of a two-part series about implementing and optimizing the particle system implemented in my cleverly-named game engine, <a class="link" href="https://github.com/JuanDiegoMontoya/Gengine">Gengine</a>. This post (part 1) will cover motivation, architecture, and a basic implementation.
     </p>
     <p>
-      According to <a style="white-space:nowrap" class="link" href="https://en.wikipedia.org/wiki/Particle_system">Wikipedia</a>, particles are used to simulate various "fuzzy" phenomena. In my case, I was looking for a way of cheaply handling effects like rain, fire, smoke, and digging effects, while still being visually plausible. Eventually, as you'll see, this turned into a personal challenge to see how many particles I could update and render while still having 60 frames per second.
+      According to <a style="white-space:nowrap" class="link" href="https://en.wikipedia.org/wiki/Particle_system">Wikipedia</a>, particles are used to simulate various "fuzzy" phenomena. In my case, I was looking for a way of cheaply handling effects like rain, fire, smoke, and digging effects, while still being visually plausible. Eventually, as you'll see, this turned into a personal challenge to see how many particles I could update and render while maintaining real-time framerates.
     </p>
     <h2>Naive CPU Implementation</h2>
     <p>
-      A naive attempt to utilize instancing to draw particles may look like the following code. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly. I also intentionally omit details like handling particle creation to keep the snippet brief. In practice, particle handling code will be more complicated than this, but it should illustrate how CPU-driven particles may be implemented.
+      A naive attempt to utilize instancing to draw particles may look like the following. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly. I also intentionally omit details like handling particle creation to keep the snippet brief. In practice, particle handling code will be more complicated than this, but it should illustrate how CPU-driven particles may be implemented.
     </p>
     <pre><code class="language-cpp">// particle with simple attributes
 struct Particle {
@@ -46,8 +46,9 @@ struct Particle {
     void Update() { position += velocity; }
 };
 
+// specifies how particles should spawn, and holds particle count and buffer
 struct ParticleEmitter {
-    vec4 color;
+    vec4 minColor, maxColor;
     vec3 minPosition, maxPosition;
     vec3 minVelocity, maxVelocity;
 
@@ -55,6 +56,7 @@ struct ParticleEmitter {
     Buffer particlesBuffer;
 };
 
+// updates particle simulation
 void UpdateEmitter(const ParticleEmitter& emitter) {
     Particle* particlesMapped = emitter.particlesBuffer.GetMappedPointer();
 
@@ -103,7 +105,7 @@ void RenderEmitter(const ParticleEmitter& emitter) {
       <li>The data lives on the GPU and is consumed by the GPU.</li>
     </ul>
     <p>
-      Very interesting. We know a tool that is great for concurrently processing data. It's called multithreading! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, the data still lives far, far away from the CPU, requiring that we synchronize access. If only there was a way to execute arbitrary code on the GPU itself!
+      We know a tool that is great for concurrently processing data. It's called multithreading! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, the data still lives far, far away from the CPU, requiring that we synchronize access. If only there was a way to execute arbitrary code on the GPU itself!
     </p>
     <h2>Compute Shaders</h2>
     <p>
