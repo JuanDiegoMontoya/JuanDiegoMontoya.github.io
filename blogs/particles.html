@@ -22,33 +22,22 @@
     <ol>
       <li>Introduction</li>
       <li>Naive CPU Implementation</li>
+      <li>Compute Shaders</li>
       <li>Naive GPU Implementation</li>
-      <li>Project Code</li>
+      <li>Closing</li>
     </ol>
     <h2>Introduction</h2>
     <p>
       Welcome to the first of a two-part series about implementing and optimizing the particle system implemented in my cleverly-named game engine, <a class="link" href="https://github.com/JuanDiegoMontoya/Gengine">Gengine</a>. This post (part 1) will cover motivation, architecture, and a basic implementation.
     </p>
     <p>
-      Why do we want particles?<br>
-      According to <a style="white-space:nowrap" class="link" href="https://en.wikipedia.org/wiki/Particle_system">Wikipedia</a>, particles are used to simulate various "fuzzy" phenomena. In my case, I was looking for a way of cheaply handling effects like rain, fire, smoke, and digging effects, while still being visually plausible. Specifically, I wanted:
+      According to <a style="white-space:nowrap" class="link" href="https://en.wikipedia.org/wiki/Particle_system">Wikipedia</a>, particles are used to simulate various "fuzzy" phenomena. In my case, I was looking for a way of cheaply handling effects like rain, fire, smoke, and digging effects, while still being visually plausible. Eventually, as you'll see, this turned into a personal challenge to see how many particles I could update and render while still having 60 frames per second.
     </p>
+    <h2>Naive CPU Implementation</h2>
     <p>
-      TODO: find where to put this paragraph<br>
-      This also served as a bit of a challenge to see how many simple particles I could dump onto the screen. I don't expect this particle system to be adequate for all, nor do I expect the optimizations describe to be useful for all particle systems. Instead, consider it a chronicling of my optimization journey.
+      A naive attempt to utilize instancing to draw particles may look like the following code. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly. I also intentionally omit details like handling particle creation to keep the snippet brief. In practice, particle handling code will be more complicated than this, but it should illustrate how CPU-driven particles may be implemented.
     </p>
-    <ul>
-      <li>Millions of particles updated and rendered every frame</li>
-      <li>Dozens of particle emitters, with the ability to handle hundreds if needed</li>
-      <li>Scalable performance. Low end machines shouldn't die because I wanted fancy particles</li>
-      <li>The base case, 1 million precipitation particles, should take no longer than one millisecond to update and render on low/mid-range GPUs (like the 1060 I'm developing on). There should be no sacrifices made to support particles</li>
-      <li>Position, velocity, acceleration, scale, tint color, lifetime, and texture (per emitter) should be the bare minimum supported particle attributes, with flexibility to add more</li>
-      <li>Collision will not be necessary</li>
-    </ul>
-    <p>
-      Next, I will emulate a realistic naive attempt to make a CPU-driven particle system that leverages instancing. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly. I also intentionally omit details like handling particle creation to keep the snippet brief.
-    </p>
-    <pre><code class="language-cpp">
+    <pre><code class="language-cpp">// particle with simple attributes
 struct Particle {
     vec4 color;
     vec3 position;
@@ -84,11 +73,11 @@ void RenderEmitter(const ParticleEmitter& emitter) {
     BindIndexBuffer(quadGeometryIndexBuffer)
     BindInstancedBuffer(emitter.particlesBuffer);
 
+    // draw all the particles in an emitter with a single draw call
     DrawInstanced(quadIndexCount, emitter.numParticles, 0, 0, 0);
-}
-    </code></pre>
+}   </code></pre>
     <p>
-      In practice, particle handling code will be more complicated than this. This approach is simple, and may even be sufficient in many cases. For us, the drawbacks are too great.
+      This approach is simple, and gives decent performance. However, the drawbacks are too great when trying to achieve maximum performance.
     </p>
     <ul>
       <li>
@@ -114,63 +103,19 @@ void RenderEmitter(const ParticleEmitter& emitter) {
       <li>The data lives on the GPU and is consumed by the GPU.</li>
     </ul>
     <p>
-      Very interesting. We know a tool that is great for concurrently processing data. It's called multithreading! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, the data still lives far, far away from the CPU, requiring that we synchronize access. If only there was a way to execute arbitrary code on the GPU, the most powerful parallel processor available to consumer PCs...
+      Very interesting. We know a tool that is great for concurrently processing data. It's called multithreading! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, the data still lives far, far away from the CPU, requiring that we synchronize access. If only there was a way to execute arbitrary code on the GPU itself!
     </p>
     <h2>Compute Shaders</h2>
     <p>
       As you might've guessed, compute shaders are the perfect tool for this task.
     </p>
-    <h2>Compute Shader Limitations</h2>
     <p>
-      It would be remiss to use compute shaders without considering their drawbacks. By going with a compute shader-based solution, we lose the ability to manipulate particles in a fine-grained way. Handling collision with terrain becomes extremely difficult. Using compute shaders to update particles also means we will be taking a slice of the precious GPU timeline. In a GPU-bound application, this can mean that we actually decrease performance by using compute shaders (depending on the number of particles)! Another thing we must consider when using compute shaders is <i>where</i> in the timeline they appear. Without async compute
+      It would be remiss to use compute shaders without considering their drawbacks. By going with a compute shader-based solution, we lose the ability to manipulate particles in a fine-grained way. Handling collision with terrain becomes difficult. Using compute shaders to update particles also means we will be taking a slice of the precious GPU timeline. In a GPU-bound application, this can mean that we actually decrease performance by using compute shaders (depending on the number of particles)! Another thing we must consider when using compute shaders is <i>where</i> in the timeline they appear. Without async compute, we may cause extra fill and drain time when the GPU switches from rasterization to compute workloads and vice versa.
     </p>
-    <h2>Architecture</h2>
+    <h2>GPU Implementation (unfinished)</h2>
     <p>
-      We want any entity to be able to emit particles, so we'll make a new component for particle emitters.
+      See links at the end of Part 2 for more info.
     </p>
-    <pre><code class="language-cpp">
-struct ParticleEmitter
-{
-  uint64_t handle{};
-
-  struct ParticleEmitterParams
-  {
-    vec3 minParticleOffset{ -1 };
-    vec3 maxParticleOffset{ 1 };
-    vec3 minParticleVelocity{ -1 };
-    vec3 maxParticleVelocity{ 1 };
-    vec3 minParticleAccel{ -1 };
-    vec3 maxParticleAccel{ 1 };
-    vec2 minParticleScale{ 1 };
-    vec2 maxParticleScale{ 1 };
-    vec4 minParticleColor{ 1 };
-    vec4 maxParticleColor{ 1 };
-
-    float interval{ 0.1f };
-    float minLife{ 1 };
-    float maxLife{ 1 };
-  } data;
-};
-    </code></pre>
-    <p>
-      It may look daunting, but it's just specifying some properties about how we want our particles to appear. <code>handle</code> is simply an opaque ID, "pointing" to an internal struct which stores additional data about this particular emitter. Let's look at that now.
-    </p>
-    <pre><code class="language-cpp">
-struct InternalEmitterData
-{
-  Buffer particleSharedDataBuffer;
-  Buffer particleUpdateDataBuffer;
-  Buffer particleRenderDataBuffer;
-  Buffer freeStackBuffer;
-  Buffer indirectDrawBuffer;
-  Buffer indicesBuffer;
-  TextureView textureView;
-  TextureSampler textureSampler;
-  uint32_t maxParticles{}; // "const"
-  uint32_t numParticles{};
-  float timer{ 0.0f };
-};
-    </code></pre>
     <p>
       Here is the vertex shader used to draw billboard particles.
     </p>
@@ -223,11 +168,7 @@ void main() {
     fragColor = texture(u_sprite, vTexCoord) * vColor;
 }
     </code></pre>
-    <figure>
-      <video controls class="center">
-        <source src="https://giant.gfycat.com/MeanImpoliteHomalocephale.mp4" type="video/mp4">
-      </video>
-      <figcaption>10 million dynamic particles at 100 FPS on a GTX 1060. This is what we'll be working towards. </figcaption>
-    </figure>
+    <h2>Closing</h2>
+    The <a href="particles_ii.html" class="link">next post</a> discusses ways we can optimize the GPU implementation of this particle system.
   </body>
 </html>

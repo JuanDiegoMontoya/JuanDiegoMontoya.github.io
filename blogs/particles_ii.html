@@ -17,6 +17,12 @@
       <li class="headerli"><a href="../about.html">About</a></li>
     </ul>
     <h1>A Fast and Simple Particle System, Part 2</h1>
+    <figure>
+      <video controls class="center">
+        <source src="https://giant.gfycat.com/MeanImpoliteHomalocephale.mp4" type="video/mp4">
+      </video>
+      <figcaption>10 million dynamic particles at 100 FPS on a GTX 1060. This is what we'll be working towards. </figcaption>
+    </figure>
     <h2>Table of Contents</h2>
     <ol>
       <li><a href="#1" class="link">Introduction</a></li>
@@ -351,13 +357,14 @@ void main() {
     </code></pre>
     <h2 id="9">Code</h2>
     <p>
-      The code for this project can be found on the Gengine repository.
-      Fragment shader: <br>
-      Vertex shader: <br>
-      Particle update shader: <br>
-      Particle generation shader: <br>
-      Rendering: <br>
-      Updating: <br>
+      The code for this project can be found on the Gengine repository.<br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/particle.fs.glsl" class="link">Fragment shader</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/particle.vs.glsl" class="link">Vertex shader</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/update_particle.cs.glsl" class="link">Particle update shader</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/update_particle_emitter.cs.glsl" class="link">Particle generation shader</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/134f9ac64d500d5fb07921e1ea2c968d9f78a398/src/engine/gfx/Renderer.cpp#L252" class="link">Rendering</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/134f9ac64d500d5fb07921e1ea2c968d9f78a398/src/engine/ecs/system/ParticleSystem.cpp#L132" class="link">Updating</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/src/engine/ecs/component/ParticleEmitter.h" class="link">Component</a><br>
     </p>
     <h2 id="8">Future Work</h2>
     <p>
