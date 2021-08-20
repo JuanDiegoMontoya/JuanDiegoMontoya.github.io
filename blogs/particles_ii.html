@@ -26,12 +26,13 @@
     <h2>Table of Contents</h2>
     <ol>
       <li><a href="#1" class="link">Introduction</a></li>
-      <li><a href="#2" class="link">Vertex Shader</a></li>
+      <li><a href="#2" class="link">Input-Free Vertex Shader</a></li>
       <li><a href="#3" class="link">Index List and Indirect Drawing</a></li>
       <li><a href="#4" class="link">Particle Culling</a></li>
       <li><a href="#5" class="link">Compaction</a></li>
       <li><a href="#6" class="link">SoA Layout</a></li>
       <li><a href="#7" class="link">Shared Memory</a></li>
+      <li><a href="#10" class="link">Conclusion</a></li>
       <li><a href="#9" class="link">Code</a></li>
       <li><a href="#8" class="link">Future Work</a></li>
     </ol>
@@ -39,7 +40,10 @@
     <p>
       The previous post in the series discussed motivation, and basic implementations (CPU and GPU) of a billboard particle system for 3D games. Here, we will discuss optimizations.
     </p>
-    <h2 id="2">Vertex Shader</h2>
+    <p>
+      Each optimization will be tested in the above scene with 10 million snow particles, centered around the player. The test will be performed on my machine, which sports a GTX 1060 6GB. With no optimizations, particle update is 14.78ms and particle rendering is 12.19ms. That alone caps our framerate at 37hz. Not bad for being completely unoptimized, but we can do better!
+    </p>
+    <h2 id="2">Input-Free Vertex Shader</h2>
     <p>
       What if we didn't have to read any vertex data in our vertex shader?
     </p>
@@ -79,7 +83,11 @@ void RenderParticleEmitter(const ParticleEmitter& emitter) {
     glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, emitter.maxParticles);
 }   </code></pre>
     <p>
-      This isn't necessarily a performance optimization, as we may be subverting the hardware's post-transform cache, or, more precisely, <a href="https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_351.pdf" class="link">a form of batching</a>. The performance benefits are admittedly theoretical, but fan primitives contain enough information to get the same vertex reuse benefits as indexed drawing. However, we can say with certainty that are avoiding the memory access required for reading a vertex and index buffer, which has a cost of its own.
+      This isn't necessarily a performance optimization, as we may be subverting the hardware's post-transform cache, or, more precisely, <a href="https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_351.pdf" class="link">a form of batching</a>. The performance benefits are admittedly theoretical, but fan primitives contain enough information to get the same vertex reuse benefits as indexed drawing. However, we can say with certainty that are avoiding the memory access required for reading a vertex and index buffer, definitely costs something.
+    </p>
+    <p>
+      Particle update: 14.78ms -&gt 14.71ms (0% improvement)<br>
+      Particle render: 12.17ms -&gt 11.94ms (2% improvement)
     </p>
     <h2 id="3">Index List and Indirect Drawing</h2>
     <p>
@@ -100,7 +108,7 @@ void RenderParticleEmitter(const ParticleEmitter& emitter) {
     uint drawIndices[];
 };  </code></pre>
     <p>
-      Being an append/stack-style buffer, you may be wondering where the count is located. It can be found in the <code>instanceCount</code> field of the indirect draw buffer.
+      Being an append/stack-style buffer, you may be wondering where the count is located. It can be found in the <code>instanceCount</code> field of the indirect draw buffer. The instance count tells both how many particles to draw and the number of indices in the stack.
     </p>
     <pre><code class="language-glsl">struct DrawArraysCommand {
   uint count;
@@ -149,6 +157,10 @@ glClearNamedBufferSubData(emitter.indirectDrawBuffer, GL_R32UI,
     <p>
       We will see an additional optimization this indirection enables in the next section.
     </p>
+    <p>
+      Particle update: 14.71ms -&gt 14.89ms (-1% improvement)<br>
+      Particle render: 11.94ms -&gt 8.86ms (26% improvement)
+    </p>
     <h2 id="4">Particle Culling</h2>
     <p>
       Because we can finely choose which particles to render, we can cull individual particles in the update shader.
@@ -169,6 +181,10 @@ else if (dot(u_forwardDir, normalize(particle.position.xyz - u_viewPos)) > CULLI
 }   </code></pre>
     <p>
       This simple addition saves us from having to render particles that are behind the view. With it, we can cheaply cull a large percentage of the particles in the scene.
+    </p>
+    <p>
+      Particle update: 14.89ms -&gt 14.89ms (0% improvement)<br>
+      Particle render: 8.86ms -&gt 3.07ms (65% improvement)
     </p>
     <h2 id="5">Compaction</h2>
     <p>
@@ -211,6 +227,10 @@ else if (dot(u_forwardDir, normalize(particle.position.xyz - u_viewPos)) > CULLI
     </p>
     <p>
       Now, why did I ignore that hidden alignment? Because there is another optimization that can be made with regards to the layout that will let us ignore it and give other gains.
+    </p>
+    <p>
+      Particle update: 14.89ms -&gt 7.81ms (48% improvement)<br>
+      Particle render: 3.07ms -&gt 2.90ms (6% improvement)
     </p>
     <h2 id="6">SoA Layout</h2>
     <p>
@@ -257,6 +277,10 @@ struct ParticleRenderData {
     </p>
     <img src="https://i.imgur.com/JyHamxP.png">
     <img src="https://i.imgur.com/i2cfNKN.png">
+    <p>
+      Particle update: 7.81ms -&gt 4.35ms (44% improvement)<br>
+      Particle render: 2.90ms -&gt 3.11ms (-7% improvement)
+    </p>
     <h2 id="7">Shared Memory</h2>
     <p>
       One problem we face at the moment is with our (ab)use of atomics. Currently, each thread performs one atomic increment. Atomics are not fast! Due to the incoherent nature of low-level GPU caches, they must be bypassed for atomics to function correctly (caches cannot be invalidated by other cores). This means that, at best, an atomic operation will be performed in the global L2 cache and, at worst, will happen in global memory. Ouch! Add this to the fact that atomic accesses from multiple threads must be serialized, and you have a recipe for poor performance.
@@ -265,7 +289,7 @@ struct ParticleRenderData {
       The solution to this problem of atomic overhead is to use a type of fast, on-chip memory called <strong>shared memory</strong> for atomic operations. On the RDNA 2 architecture, each dual compute unit has a local data share (LDS), giving us similar latency to the L0 cache!
     </p>
     <p>
-      You can see the LDS's physical proximity to the ALUs in the following image to visually understand why it is quick.
+      You can see the LDS's physical proximity to the ALUs in the following image of an RDNA 2 CU to visually understand why it is quick.
     </p>
     <img src="https://i.imgur.com/DzHv3br.png">
     <p>
@@ -275,12 +299,18 @@ struct ParticleRenderData {
       The main problem with shared memory is that since it's local to the work group, we have to devise a new strategy to use it. Previously, we would immediately get a draw index or free list index in any thread that needs to push to one of those buffers.
     </p>
     <p>
-      The new plan is to record in shared memory that this thread <i>wants</i> an index when it determines its particle will be freed or drawn. Later, the main thread (thread 0), will "request" (via atomic add) a region that is fit for all the threads in the group.
+      The new plan is to record in shared memory that this thread <i>wants</i> an index when it determines its particle will be freed or drawn. A shared counter will be used to record how many threads need a particular type of index. Later, the main thread (thread 0), will "request" (via atomic add) a region that is fit for all the threads in the group. The start of this region is stored in shared memory. Finally, each thread that previously needed to record its particle's index in a buffer can atomically increment the shared range.
+    </p>
+    <p>
+      A restaurant is analogous to this. The table is the work group, each patron is a thread, and the waiter is the main thread (it is a strange restaurant where the waiter is also a patron). Previously, we were doing the equivalent of having the waiter record one patron's meal, wait for the kitchen to cook it, serve the meal, then record another patron's meal, and so forth. Obviously this is an inefficient way of doing things. The new and improved strategy is like having the waiter record all the patrons' meals at once, waiting for the kitchen to cook them, then serving all the meals at once. No need to repeatedly go back and forth to the kitchen (global memory) if the patrons and the waiter work together.
+    </p>
+    <p>
+      In programming terms, this can be thought of as a form of batching where many work items are merged into a single unit to avoid overhead.
     </p>
     <p>
       The updated shader is tricky to read, so I have replaced the unimportant bits with comments, and annotated the rest.
     </p>
-    <pre><code class="language-glsl">
+    <pre><code class="language-glsl">// shared memory declarations
 shared int sh_freeIndex;
 shared int sh_requestedFreeIndices;
 shared uint sh_drawIndex;
@@ -304,7 +334,7 @@ void main() {
     if (index &lt particlesShared.length()) {
         // get particle attributes
 
-        if (life > 0.0) {
+        if (life &gt 0.0) {
             // update position and velocity
             life -= u_dt;
             
@@ -312,6 +342,7 @@ void main() {
             if (life &lt= 0.0) {
                 // we need a freelist index later
                 // notice how we increment a shared atomic
+                // this will later be used by the main thread in requesting a chunk of the buffer
                 needFreeIndex = true;
                 atomicAdd(sh_requestedFreeIndices, 1);
             }
@@ -353,30 +384,43 @@ void main() {
         uint drawIndex = atomicAdd(sh_drawIndex, 1);
         drawIndices[drawIndex] = index;
     }
-}
-    </code></pre>
+}   </code></pre>
+    <p>
+      Particle update: 4.35ms -&gt 4.37ms (0% improvement)<br>
+      Particle render: 3.11ms -&gt 3.01ms (3% improvement)
+    </p>
+    <h2 id="10">Conclusion</h2>
+    <p>
+      We started with 10 million particles taking 26.97ms per frame, and we ended with them taking only 7.38ms per frame. By itself, that is the difference between 37 and 136 FPS. I would say that result is worth the effort! Now, if I were to use my engine to develop a game (ha ha ha), I would not have to worry much about overuse of particles leading to poor performance. It also gives more room for other graphical effects. We can also see that not all optimizations are equal. Some, like particle culling, were extremely easy to implement while having a large benefit on performance. Others, like using shared memory, are tricky to implement and only provided a modest performance uplift.
+    </p>
+    <p>
+      In closing, I say this: data is key. It sounds cliche, but almost all of the optimizations applied here boil down to this. In other words, when optimizing, look at how the data is transformed, what data is needed, and the set of hardware the program will run on (programs don't run on abstract machines after all!).
+    </p>
+    <p>
+      I hope this helped you learn something new or at least provided an introduction to some new concepts. Thanks for reading.
+    </p>
     <h2 id="9">Code</h2>
     <p>
       The code for this project can be found on the Gengine repository.<br>
-      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/particle.fs.glsl" class="link">Fragment shader</a><br>
       <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/particle.vs.glsl" class="link">Vertex shader</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/particle.fs.glsl" class="link">Fragment shader</a><br>
       <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/update_particle.cs.glsl" class="link">Particle update shader</a><br>
       <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/data/game/Shaders/update_particle_emitter.cs.glsl" class="link">Particle generation shader</a><br>
-      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/134f9ac64d500d5fb07921e1ea2c968d9f78a398/src/engine/gfx/Renderer.cpp#L252" class="link">Rendering</a><br>
+      <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/12e3320bcb22f2a0d95de688091a6f47d1bc0adc/src/engine/gfx/Renderer.cpp#L254" class="link">Rendering</a><br>
       <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/134f9ac64d500d5fb07921e1ea2c968d9f78a398/src/engine/ecs/system/ParticleSystem.cpp#L132" class="link">Updating</a><br>
       <a href="https://github.com/JuanDiegoMontoya/Gengine/blob/master/src/engine/ecs/component/ParticleEmitter.h" class="link">Component</a><br>
     </p>
     <h2 id="8">Future Work</h2>
     <p>
-      There are still many optimizations and features that could be added.
+      There are still many optimizations and features that could be added. Here are some ideas I thought of for potential optimizations. Keep in mind that not all of them have the same effort-benefit ratio!
     </p>
     <ul>
       <li><strong>Per-emitter culling</strong>: frustum culling and occlusion culling can be employed to prevent emitters outside the view from being updated and rendered. A bounding box could be determined by the max distance a particle could travel from the emitter.</li>
       <li><strong>Software rasterization</strong>: when rendering so many particles, it isn't uncommon for some to only be a few pixels large when rasterized. Such small triangles are inefficient for the hardware, as 2x2 quads are the smallest thing that can be rasterized by it. This can cause up to 75% of pixel shader work being wasted. A custom rasterizers optimized for small triangles can be implemented via compute. Then, heuristics can be employed to choose between software and hardware rasterizers for different particle sizes. This is similar to how Nanite uses both software and hardware rasterization. More info can be found <a href="https://www.elopezr.com/a-macro-view-of-nanite/" class="link">here</a>.</li>
-      <li><strong>Variable rate emitter updating</strong>: emitters could be updated less frequently the farther they are from the camera.  Self-explanatory.</li>
+      <li><strong>Variable rate emitter updating</strong>: emitters could be updated less frequently the farther they are from the camera instead of every frame.</li>
       <li><strong>Shadow map precipitation culling</strong>: using a shadow map, precipitation particles can be culled so they only appear where the sky is directly overhead.</li>
       <li><strong>More features</strong>: rotation, angular velocity, dynamic color, lighting, and 3D particles are all feasible without needing major code restructuring.</li>
-      <li><strong>Buffer coalescing</strong>: each emitter requires five buffers, which leads to excessive buffer creation and destruction with many emitters. Instead, we could allocate sections of one or more stretchy buffers. This may lead to reduced driver overhead.</li>
+      <li><strong>Buffer coalescing</strong>: each emitter requires six buffers, which leads to excessive buffer creation and destruction with many emitters. Instead, we could allocate sections of one or more stretchy buffers. This may lead to reduced driver overhead.</li>
     </ul>
   </body>
 </html>
