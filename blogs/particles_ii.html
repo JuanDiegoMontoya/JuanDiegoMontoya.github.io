@@ -328,7 +328,7 @@ void main() {
     barrier();
     memoryBarrierShared();
 
-    int index = int(gl_GlobalInvocationID.x) + i;
+    int index = int(gl_GlobalInvocationID.x);
     bool needFreeIndex = false;
     bool needDrawIndex = false;
     if (index &lt particlesShared.length()) {
