@@ -408,13 +408,13 @@ void main() {
     </ul>
     <h2 id="conclusion">Conclusion</h2>
     <p>
-      We started with 10 million particles taking 26.97ms per frame, and we ended with them taking only 7.38ms per frame. By itself, that is the difference between 37 and 136 FPS. I would say that result is worth the effort! Now, if I were to use my engine to develop a game (ha ha ha), I would not have to worry much about overuse of particles leading to poor performance. It also gives more room for other graphical effects. We can also see that not all optimizations are equal. Some, like particle culling, were extremely easy to implement while having a large benefit on performance. Others, like using shared memory, are tricky to implement and only provided a modest performance uplift.
+      We started with 10 million particles taking 26.97ms per frame, and we ended with them taking only 7.38ms per frame. By itself, that is the difference between 37 and 136 FPS. I would say that result is worth the effort! Now, if I were to use my engine to develop a game (ha ha ha), I would not have to worry much about overuse of particles leading to poor performance. It also gives room for other graphical effects. We can also see that not all optimizations are equal. Some, like particle culling, were extremely easy to implement while having a large benefit on performance. Others, like using shared memory, are tricky to implement and provide a questionable performance uplift.
     </p>
     <p>
-      In closing, I say this: know your data! This is especially important for us, as the shaders are memory-limited. In other words,  know how the data is transformed, what data is needed, and the set of hardware the program will run on (programs don't run on abstract machines after all!).
+      I can't emphasize enough when I say this: know your data! When trying to optimize a system for the GPU, it's very easy to become bandwidth limited. In other words, know how the data is transformed, what data is needed, and the set of hardware the program will run on (programs don't run on abstract machines after all!).
     </p>
     <p>
-      I hope this helped you learn something new or at least provided an introduction to some new concepts. Thanks for reading.
+      I hope you learn something new. Thanks for reading.
     </p>
     <h2 id="code">Code</h2>
     <p>
@@ -440,5 +440,8 @@ void main() {
       <li><strong>Buffer coalescing</strong>: each emitter requires six buffers, which leads to excessive buffer creation and destruction with many emitters. Instead, we could allocate sections of one or more stretchy buffers. This may lead to reduced driver overhead at the expense of more difficult buffer management.</li>
       <li><strong>Wave/subgroup intrinsics</strong>: <a href="https://www.khronos.org/blog/vulkan-subgroup-tutorial" class="link">Vulkan</a> and <a href="https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12#shading-language-intrinsics" class="link">D3D12</a> expose intrinsics that let us leverage coherent execution between threads at the wave level. The main benefit for us would being able to replace the shared memory and barriers with fewer wave-wide instructions.</li>
     </ul>
+    <p>
+      I am accepting suggestions for improvements for this blog. Just contact me on GitHub, or on Discord if you know me. Thanks martty for your ideas on revising this, and thanks to GPVM for tolerating my ill-prepared presentation on this :)
+    </p>
   </body>
 </html>
