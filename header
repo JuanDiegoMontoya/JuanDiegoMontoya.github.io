@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
   <head>
-    <title>About</title>
+    <title>Projects</title>
     <link rel="icon" href="assets/icon.png">
     <link rel="stylesheet" href="style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,9 +13,3 @@
       <li class="headerli"><a href="projects.html">Projects</a></li>
       <li class="headerli"><a href="about.html">About</a></li>
     </ul>
-    <p>Lorum Ipsum</p>
-    <p>
-      <a href="https://github.com/JuanDiegoMontoya" class="link">GitHub</a>
-    </p>
-  </body>
-</html>
