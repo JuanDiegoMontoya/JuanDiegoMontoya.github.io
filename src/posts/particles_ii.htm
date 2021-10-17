@@ -394,10 +394,10 @@ void main() {
   We started with 10 million particles taking 26.97ms per frame, and we ended with them taking only 7.38ms per frame. By itself, that is the difference between 37 and 136 FPS. I would say that result is worth the effort! Now, if I were to use my engine to develop a game (ha ha ha), I would not have to worry much about overuse of particles leading to poor performance. It also gives room for other graphical effects. We can also see that not all optimizations are equal. Some, like particle culling, were extremely easy to implement while having a large benefit on performance. Others, like using shared memory, are tricky to implement and provide a questionable performance uplift.
 </p>
 <p>
-  I can't emphasize enough when I say this: know your data! When trying to optimize a system for the GPU, it's very easy to become bandwidth limited. In other words, know how the data is transformed, what data is needed, and the set of hardware the program will run on (programs don't run on abstract machines after all!).
+  In conclusion, know your data! When implementing a high-throughput system for the GPU, it's very easy to become bandwidth limited. This is especially true when you are doing very little arithmetic work on each piece of data (like here). The most effective optimizations were conceived through simple observations about the data.
 </p>
 <p>
-  I hope you learn something new. Thanks for reading.
+  Hopefully this post was informative. Thanks for reading!
 </p>
 <h2 id="code">Code</h2>
 <p>
@@ -416,13 +416,13 @@ void main() {
 </p>
 <ul>
   <li><strong>Per-emitter culling</strong>: frustum culling and occlusion culling can be employed to prevent emitters outside the view from being updated and rendered. A bounding box could be determined by the max distance a particle could travel from the emitter.</li>
-  <li><strong>Software rasterization</strong>: when rendering so many particles, it isn't uncommon for some to only be a few pixels large when rasterized. Such small triangles are inefficient for the hardware, as 2x2 quads are the smallest thing that can be rasterized by it. This can cause up to 75% of pixel shader work being wasted. Custom rasterizers optimized for small triangles can be implemented via compute. Then, heuristics can be employed to choose between software and hardware rasterizers for different particle sizes. This is similar to how rasterization is employed in UE5's Nanite. More info can be found <a href="https://www.elopezr.com/a-macro-view-of-nanite/" class="link">here</a>. Since our particles are always rectangles, simple compute splatting may work as well.</li>
-  <li><strong>Variable rate emitter updating</strong>: emitters could be updated less frequently the farther they are from the camera instead of every frame.</li>
-  <li><strong>Shadow map precipitation culling</strong>: using a shadow map, precipitation particles can be culled so they only appear where the sky is directly overhead.</li>
-  <li><strong>More features</strong>: rotation, angular velocity, dynamic color, lighting, and 3D particles are all feasible without needing major code restructuring. Keep in mind that adding more data will incur a performance penalty.</li>
+  <li><strong>Software rasterization</strong>: when rendering so many particles, it isn't uncommon for some to only be a few pixels large when rasterized. Such small triangles are inefficient for the hardware, as 2x2 quads are the smallest thing that can be rasterized by it. This can cause up to 75% of pixel shader work being wasted. Custom rasterizers optimized for small triangles can be implemented via compute. Then, heuristics can be employed to choose between software and hardware rasterizers for different particle sizes. This is similar to how rasterization is employed in Unreal Engine 5's Nanite. More info about Nanite can be found <a href="https://www.elopezr.com/a-macro-view-of-nanite/" class="link">here</a>. Since the particles here are always rectangles, simple compute splatting may work as well.</li>
+  <li><strong>Variable rate emitter updating</strong>: particles could be updated less frequently the farther they are from the camera instead of every frame.</li>
+  <li><strong>Precipitation culling</strong>: using ray tracing or a shadow map, precipitation particles can be culled so they only appear where the sky is directly overhead.</li>
+  <li><strong>More features</strong>: rotation, angular velocity, dynamic color, lighting, and 3D particles are all feasible without major code restructuring. Keep in mind that adding more data will incur a performance penalty.</li>
   <li><strong>Buffer coalescing</strong>: each emitter requires six buffers, which leads to excessive buffer creation and destruction with many emitters. Instead, we could allocate sections of one or more stretchy buffers. This may lead to reduced driver overhead at the expense of more difficult buffer management.</li>
-  <li><strong>Wave/subgroup intrinsics</strong>: <a href="https://www.khronos.org/blog/vulkan-subgroup-tutorial" class="link">Vulkan</a> and <a href="https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12#shading-language-intrinsics" class="link">D3D12</a> expose intrinsics that let us leverage coherent execution between threads at the wave level. The main benefit for us would being able to replace the shared memory and barriers with fewer wave-wide instructions.</li>
+  <li><strong>Wave/subgroup intrinsics</strong>: <a href="https://www.khronos.org/blog/vulkan-subgroup-tutorial" class="link">Vulkan</a> and <a href="https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12#shading-language-intrinsics" class="link">D3D12</a> expose intrinsics that let us leverage coherent execution between threads at the wave level. Its main benefit is allowing us to replace the shared memory and barriers with fewer wave-wide instructions.</li>
 </ul>
 <p>
-  I am accepting suggestions for improvements for this blog. Just contact me on GitHub, or on Discord if you know me. Thanks martty for your ideas on revising this, and thanks to GPVM for tolerating my ill-prepared presentation on this :)
+  I am accepting suggestions for improvements for this blog. Just contact me on GitHub, or on Discord if you know me. Special thanks martty for his ideas on revising this post, and thanks to GPVM for tolerating my ill-prepared presentation on this :)
 </p>
