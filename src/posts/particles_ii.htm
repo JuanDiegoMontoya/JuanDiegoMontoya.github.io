@@ -30,7 +30,7 @@
 </p>
 <h2 id="input-free-vertex-shader">Input-Free Vertex Shader</h2>
 <p>
-  Because all of our particles are quads, we can do some neat things. The first of which is being able to encode the quad in the vertex shader, and I don't mean by making an array of <code>vec2</code>.
+  Because all of our particles are quads, we can simplify the vertex input by encoding the geometry in the vertex shader. This can be done by indexing a constant array or using bit tricks and magic numbers. We'll opt for the second as it uses less constant memory/SGPRs.
 </p>
 <pre><code class="language-glsl">layout(location = 0) out vec2 vTexCoord;
 
@@ -102,7 +102,7 @@ layout(std430, binding = 4) coherent restrict buffer IndirectCommand {
   DrawArraysCommand indirectCommand;
 };</code></pre>
 <p>
-  Every frame before updating particles, we need to reset the instance count from the CPU. This is trivial in any API and does not introduce a sync point.
+  Every frame before updating particles, we need to issue a command to reset the instance count from the CPU (we don't directly reset the instance count so we can avoid stalls). In OpenGL it looks like the following:
 </p>
 <pre><code class="language-glsl">uint32_t zero{ 0 };
 glClearNamedBufferSubData(emitter.indirectDrawBuffer, GL_R32UI,
@@ -144,7 +144,7 @@ glClearNamedBufferSubData(emitter.indirectDrawBuffer, GL_R32UI,
 </p>
 <h2 id="particle-culling">Particle Culling</h2>
 <p>
-  Because we can finely choose which particles to render, we can cull individual particles in the update shader.
+  Because we can finely choose which particles to render, we can cull individual particles in the update shader. We'll implement a simple culling scheme that culls particles outside of a view-aligned cone.
 </p>
 <pre><code class="language-glsl">// smaller value = more permissive culling
 #define CULLING_MIN_ANGLE 0.4

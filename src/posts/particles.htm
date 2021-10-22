@@ -3,20 +3,20 @@
 <img src="https://i.imgur.com/ykOuFZs.jpeg">
 <h2>Table of Contents</h2>
 <ol>
-  <li>Introduction</li>
-  <li>Naive CPU Implementation</li>
-  <li>Compute Shaders</li>
-  <li>Naive GPU Implementation</li>
-  <li>Closing</li>
+  <li><a href="#introduction" class="link">Introduction</a></li>
+  <li><a href="#cpu" class="link">Naive CPU Implementation</a></li>
+  <li><a href="#compute" class="link">Compute Shaders</a></li>
+  <li><a href="#gpu" class="link">Naive GPU Implementation</a></li>
+  <li><a href="#closing" class="link">Closing</a></li>
 </ol>
-<h2>Introduction</h2>
+<h2 id="introduction">Introduction</h2>
 <p>
-  Welcome to the first of a two-part series about implementing and optimizing the particle system implemented in my cleverly-named game engine, <a class="link" href="https://github.com/JuanDiegoMontoya/Gengine">Gengine</a>. This post (part 1) will cover motivation, architecture, and a basic implementation.
+  Welcome to the first of a two-part series about implementing and optimizing the particle system implemented in my WIP game engine, <a class="link" href="https://github.com/JuanDiegoMontoya/Gengine">Gengine</a>. This post (part 1) will cover motivation, architecture, and a basic implementation.
 </p>
 <p>
   According to <a style="white-space:nowrap" class="link" href="https://en.wikipedia.org/wiki/Particle_system">Wikipedia</a>, particles are used to simulate various "fuzzy" phenomena. In my case, I was looking for a way of cheaply handling effects like rain, fire, smoke, and digging effects, while still being visually plausible. Eventually, as you'll see, this turned into a personal challenge to see how many particles I could update and render while maintaining real-time framerates.
 </p>
-<h2>Naive CPU Implementation</h2>
+<h2 id="cpu">Naive CPU Implementation</h2>
 <p>
   A naive attempt to utilize instancing to draw particles may look like the following. A fake implicitly-synchronized graphics API and unspecified external variables are used in this example to convey intent more clearly. I also intentionally omit details like handling particle creation to keep the snippet brief. In practice, particle handling code will be more complicated than this, but it should illustrate how CPU-driven particles may be implemented.
 </p>
@@ -62,7 +62,7 @@ void RenderEmitter(const ParticleEmitter& emitter) {
     DrawInstanced(quadIndexCount, emitter.numParticles, 0, 0, 0);
 }</code></pre>
 <p>
-  This approach is simple, and gives decent performance. However, the drawbacks are too great when trying to achieve maximum performance.
+  This approach is simple and performs acceptably for small numbers of particles. However, there are some pitfalls when it comes to rendering many particles with this method:
 </p>
 <ul>
   <li>
@@ -90,23 +90,32 @@ void RenderEmitter(const ParticleEmitter& emitter) {
 <p>
   We know a tool that is great for concurrently processing data. It's called multithreading! Our problem happens to be an <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" class="link">embarrassingly parallel</a> workload. However, the data still lives far, far away from the CPU, requiring that we synchronize access. If only there was a way to execute arbitrary code on the GPU itself!
 </p>
-<h2>Compute Shaders</h2>
+<h2 id="compute">Compute Shaders</h2>
 <p>
-  As you might've guessed, compute shaders are the perfect tool for this task.
+  As you might've guessed, compute shaders are almost perfectly suited for this kind of processing. They allow us to perform highly parallel work on data that resides on the GPU. Serendipidous, right? Mostly. Using compute shaders to update particles means we will be taking a slice of the precious GPU timeline. In a GPU-bound application, this can mean that we actually decrease the application's performance (depending on the number of particles)! Another thing we must consider when using compute shaders is <i>where</i> in the timeline they appear. Without async compute, we may cause extra fill and drain time when the GPU switches from rasterization to compute workloads and vice versa.
 </p>
 <p>
-  It would be remiss to use compute shaders without considering their drawbacks. By going with a compute shader-based solution, we lose the ability to manipulate particles in a fine-grained way. Handling collision with terrain becomes difficult. Using compute shaders to update particles also means we will be taking a slice of the precious GPU timeline. In a GPU-bound application, this can mean that we actually decrease performance by using compute shaders (depending on the number of particles)! Another thing we must consider when using compute shaders is <i>where</i> in the timeline they appear. Without async compute, we may cause extra fill and drain time when the GPU switches from rasterization to compute workloads and vice versa.
+  Even with those considerations, compute is still an excellent choice for us, and the only one that will allow us to achieve the performance needed to have millions of particles on (modern) meager hardware.
 </p>
-<h2>GPU Implementation (unfinished)</h2>
+<h2 id="gpu">GPU Implementation</h2>
 <p>
-  See links at the end of Part 2 for more info.
+  We'll be using the following particle structure for this implementation. Note that this is an extended version of the C++ struct above, with acceleration and lifetime info to create more interesting effects.
 </p>
 <p>
-  Here is the vertex shader used to draw billboard particles.
+  For more reading on compute shaders, check out <a href="https://www.khronos.com/opengl/wiki/Compute_Shader" class="link">Khronos' OpenGL page</a> and <a href="https://developer.nvidia.com/blog/easy-introduction-cuda-c-and-c/" class="link">this intro to CUDA</a>. CUDA kernels share the same execution model as compute shaders in other APIs, so its resources are great for learning about GPU compute as well.
 </p>
-<pre><code>
-#version 460 core
-
+<pre><code>// particle.h
+struct Particle {
+  vec3 position;
+  vec3 velocity;
+  vec3 accel;
+  vec4 color;
+  float life;
+};</code></pre>
+<p>
+  Next, let's take a look at one potential vertex shader that can be used for this. The choice of shader is unimportant. Here, we'll use one that draws camera-aligned billboards.
+</p>
+<pre><code>#version 460 core
 #include "particle.h"
 
 layout(std430, binding = 0) readonly restrict buffer Particles {
@@ -135,13 +144,11 @@ void main() {
         u_cameraUp * aPos.y * particle.scale.y;
 
     gl_Position = u_viewProj * vec4(vertexPosition_worldspace, 1.0);
-}
-</code></pre>
+}</code></pre>
 <p>
-  The fragment shader is dead simple.
+  The fragment shader for this example will shade a textured quad with a tint and no lighting. This texture will be tied to the emitter itself, as we'll later see, but you can organize this how you see fit.
 </p>
-<pre><code>
-#version 460 core
+<pre><code>#version 460 core
 layout(location = 0) in vec2 vTexCoord;
 layout(location = 1) in vec4 vColor;
 
@@ -151,7 +158,207 @@ layout(location = 0) out vec4 fragColor;
 
 void main() {
     fragColor = texture(u_sprite, vTexCoord) * vColor;
+}</code></pre>
+<p>
+  These shaders are not tied to the particle system in any way. For instance, the vertex shader could be replaced with one that transforms the vertices of a 3D model, or the fragment shader could be replaced with one that performs lighting calculations. Now, let's see how updating the particles works.
+</p>
+<p>
+  We'll be using an append buffer (or atomic stack) to store the indices of dead particles so they can be reused later.
+</p>
+<pre><code class="language-glsl">#version 460 core
+#include "particle.h"
+
+layout(std430, binding = 0) buffer SSBO_0 {
+  Particle particles[];
+};
+
+layout(std430, binding = 1) buffer SSBO_1 {
+  coherent int count;
+  int indices[];
+}freelist;
+
+layout(location = 0) uniform float u_dt;
+
+void UpdateParticle(inout Particle particle, int index) {
+  if (particle.life > 0) {
+    particle.velocity += particle.accel * u_dt;
+    particle.pos += particle.velocity * u_dt;
+    particle.life -= u_dt;
+
+    if (particle.life <= 0.0) {
+      particle.color.a = 0.0; // make the particle invisible
+      freelist.indices[atomicAdd(freelist.count, 1)] = index;
+    }
+  }
 }
-</code></pre>
-<h2>Closing</h2>
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+void main() {
+  uint index = gl_GlobalInvocationID.x;
+
+  if (index >= particles.length())
+    return;
+
+  UpdateParticle(particles[index], int(index));
+}</code></pre>
+<p>
+  Assuming you have some understanding of compute shaders, this shader is very simple. Each work group will contain 128 threads (a sensible, but arbitrary choice), and each thread will update just one particle in-place using numerical integration. Particles that have "died" (their life reduced below zero) have their indices placed into a structure that allows us to reuse them later.
+</p>
+<p>
+  We first need a struct that defines certain parameters of how the particles will spawn. Since we're bundling this info with info about the particles themselves, we'll call this struct <code>ParticleEmitter</code>, not unlike in the CPU example. Even though there will be a variable number of particles alive at any given time, we can treat them all as being alive for the sake of rendering. As you saw in the snippet above, dead particles have their alpha set to zero and have their index put into a list for reuse.
+</p>
+<p>
+  Another interesting thing is that the CPU <i>no longer knows how many particles are alive</i>, and it cannot make any assumptions. We only specify a <i>maximum</i> number of particles. This maximum dictates the size of the buffers we make. The GPU will know how many particles are <i>dead</i> with the freelist, which will be useful when spawning and destroying particles. When rendering or updating particles, since we don't know the count of alive particles on the CPU (nor their positions on the GPU), we attempt to update and render every particle, only checking for alive-ness at the last moment. In the next post we'll see when this can be an issue, and how it can be mitigated.
+</p>
+<pre><code class="language-cpp">struct ParticleEmitter {
+  vec4 minColor, maxColor;
+  vec3 minOffset, maxOffset;
+  vec3 minVelocity, maxVelocity;
+  vec3 minAccel, maxAccel;
+  float minLife, maxLife;
+  // position of the emitter. In an engine you might prefer to use a transform component instead
+  vec3 position;
+
+  float spawnInterval, timer;
+  uint32_t maxParticles;
+  Buffer particlesBuffer;
+  Buffer freelistBuffer;
+  Texture* texture;
+};</code></pre>
+<p>
+  Now, let's see how we can generate particles from a compute shader. This is, after all, a pretty crucial aspect of a particle system.
+</p>
+<pre><code class="language-glsl">#version 460 core
+#include "particle.h"
+#include "rand.h"
+
+struct EmitterSettings {
+  vec4 minColor, maxColor;
+  vec3 minOffset, maxOffset;
+  vec3 minVelocity, maxVelocity;
+  vec3 minAccel, maxAccel;
+  float minLife, maxLife;
+  vec3 position;
+};
+
+layout(std430, binding = 0) writeonly restrict buffer SSBO_0 {
+  Particle particles[];
+};
+
+layout(std430, binding = 1) coherent restrict buffer SSBO_1 {
+  int count;
+  int indices[];
+}freelist;
+
+layout(location = 0) uniform int u_particlesToSpawn;
+layout(location = 1) uniform EmitterSettings u_emitter;
+
+// make a particle with random attributes
+void MakeParticle(out Particle particle) {
+  particle.life =         rng1(u_emitter.minLife, u_emitter.maxLife);
+  particle.velocity.xyz = rng3(u_emitter.minVelocity.xyz, u_emitter.maxVelocity.xyz);
+  particle.accel.xyz =    rng3(u_emitter.minAccel.xyz, u_emitter.maxAccel.xyz);
+  particle.scale.xy =     rng2(u_emitter.minScale.xy, u_emitter.maxScale.xy);
+  particle.color.rgba =   rng4(u_emitter.minColor.rgba, u_emitter.maxColor.rgba);
+
+  // we could use a transform matrix here
+  vec3 pos =              rng3(u_emitter.minOffset.xyz, u_emitter.maxOffset.xyz);
+  particle.pos = u_emitter.position + pos;
+}
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+void main() {
+  uint index = gl_GlobalInvocationID.x;
+
+  if (index >= u_particlesToSpawn)
+    return;
+
+  // undo decrement and return if nothing in freelist
+  int freeListIndex = atomicAdd(freelist.count, -1) - 1;
+  if (freeListIndex < 0) {
+    atomicAdd(freelist.count, 1);
+    return;
+  }
+
+  int particleIndex = freelist.indices[freeListIndex];
+  MakeParticle(particlesShared[particleIndex]);
+}</code></pre>
+<p>
+  For brevity, I omitted the implementations of the PRNG functions. If you would like to learn more about random numbers on the GPU, check out <a href="https://www.reedbeta.com/blog/hash-functions-for-gpu-rendering/" class="link">this post</a> and <a href="https://gist.github.com/JuanDiegoMontoya/f4226d0fa3c627bb78e82fda67057d6e" class="link">this gist with an implementation</a>.
+</p>
+<p>
+  To tie it all together, let's see how this system flows on the CPU. This is a mock implementation, but it reflects how I did it in my engine. Note how the CPU does little work each frame; it only has to bind buffers, set uniforms, and dispatch a compute shader for each emitter.
+</p>
+<pre><code class="language-cpp">Shader particleSpawnShader;
+Shader particleUpdateShader;
+Shader particleRenderShader;
+
+void ParticleSystemUpdate(float dt, span&ltParticleEmitter&gt emitters) {
+  // ensure that writes from last frame's updates are complete
+  // in practice, this won't be a problem, but let's be safe anyway :)
+  glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+  // particle spawn loop- one dispatch per emitter
+  particleSpawnShader.Bind();
+  for (auto& emitter : emitters) {
+    emitter.timer += dt;
+
+    unsigned particlesToSpawn = emitter.timer / emitter.spawnInterval;
+    emitter.timer = mod(emitter.timer, emitter.spawnInterval);
+
+    if (particlesToSpawn <= 0)
+      continue;
+
+    // sets the uniforms for the u_emitter object from the previous code snippet
+    // since there's a bunch of them, they are hidden in this function's definition
+    SetParticleSpawnUniforms(emitter);
+    emitter.particlesBuffer.BindSSBO(0);
+    emitter.freelistBuffer.BindSSBO(1);
+
+    // run the compute shader
+    int workGroupSize = QueryLinearWorkGroupSize(particleSpawnShader); // or the constant 64
+    int numWorkGroups = (particlesToSpawn + workGroupSize - 1) / workGroupSize;
+    glDispatchCompute(numWorkGroups, 1, 1);
+  }
+
+  // ensure that the spawned particles are visible in particle updates
+  glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+  // particle update loop- again, one dispatch per emitter
+  particleUpdateShader.Bind();
+  particleUpdateShader.SetFloatUniform("u_dt", dt);
+  for (auto& emitter : emitters) {
+    emitter.particlesBuffer.BindSSBO(0);
+    emitter.freelistBuffer.BindSSBO(1);
+
+    // run the compute shader
+    int workGroupSize = QueryLinearWorkGroupSize(particleUpdateShader); // or the constant 128
+    int numWorkGroups = (emitter.maxParticles + workGroupSize - 1) / workGroupSize;
+    glDispatchCompute(numWorkGroups, 1, 1);
+  }
+}
+
+// renders a list of particle emitters
+void RenderParticleEmitters(Camera camera, span&ltParticleEmitter&gt emitters) {
+  // in OpenGL, this would just be glBindVertexArrays()
+  // this sets a simple vertex format and binds a vertex buffer specifying one quad
+  SetParticleVertexAttributesAndBindings();
+
+  // you may want to sort the emitters from front-to-back here if you have transparent particles
+  particleRenderShader.Bind();
+  mat4 v = camera.viewMatrix;
+  particleRenderShader.SetMat4Uniform("u_viewProj", camera.viewProj);
+  particleRenderShader.SetVec3Uniform("u_cameraRight", { v[0][0], v[1][0], v[2][0] });
+  particleRenderShader.SetVec3Uniform("u_cameraUp", { v[0][1], v[1][1], v[2][1] });
+  
+  // render each emitter with one draw call
+  for (const auto& emitter : emitters) {
+    emitter.texture->Bind(0);
+    glDrawElementsInstanced(GL_TRIANGLES, 0, 6, emitter.maxParticles);
+  }
+}</code></pre>
+<p>
+  In the main loop, we only need to call <code>ParticleSystemUpdate</code> and <code>RenderParticleEmitters</code> once each frame. Now we can have many times more particles than the CPU version could handle! That said, we still have some areas that can be improved. Most of the time spent in particles is in the particle update loop and rendering, but not the particle spawn loop. Why not the spawn loop? Well, simply because that shader is not invoked very often. Imagine a scenario where we had one million particles to simulate rain. All of those particles would have to be updated and rendered every frame, but only tens of thousands of particles need to be spawned each frame (assuming we spawn one million particles per second and have a framerate of 60hz). Therefore, we're free to focus our optimization efforts on the other shaders.
+</p>
+<h2 id="closing">Closing</h2>
 The <a href="particles_ii.html" class="link">next post</a> discusses ways we can optimize the GPU implementation of this particle system.

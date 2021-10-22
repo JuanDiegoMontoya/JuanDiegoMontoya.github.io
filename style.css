@@ -83,7 +83,7 @@ pre {
 }
 
 .link:hover {
-  color:rgb(144, 0, 201)
+  color:rgb(144, 0, 201);
 }
 
 .center {
@@ -110,4 +110,14 @@ figcaption, video {
 .sameline {
   display: flex;
   justify-content: space-between;
+}
+
+/* thanks to JB for this */
+a:link, a:visited {
+ text-decoration:none;
+ transition:.35s ease-out;
+}
+a:hover {
+ text-decoration:none;
+ transition:.10s ease-in;
 }
