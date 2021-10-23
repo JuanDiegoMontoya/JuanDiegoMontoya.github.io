@@ -13,7 +13,7 @@ body {
   background-color: rgb(12, 14, 20);
   font-size: 16px;
   max-width: 800px;
-  margin: 2em auto;
+  margin: 2em auto+5em;
 }
 
 code {
@@ -115,9 +115,41 @@ figcaption, video {
 /* thanks to JB for this */
 a:link, a:visited {
  text-decoration:none;
- transition:.35s ease-out;
+ transition:.35s ease-in-out;
 }
+
 a:hover {
  text-decoration:none;
- transition:.10s ease-in;
+ transition:.10s ease-in-out;
+}
+
+.textimage {
+  width: 24em;
+  height: 6em;
+  background-repeat: no-repeat;
+  background-attachment: local;
+  background-size: 100%;
+  position: relative;
+}
+.textimage:hover {
+  background-size: 110%;
+  background-position: 50%;
+  transition: background-size .1s ease-in-out;
+}
+
+.textimage-content {
+  position: absolute;
+  bottom: 0;
+  /* background-image: linear-gradient(to bottom, rgba(12, 14, 20, 0.5), rgba(12, 14, 20, 0.7)); */
+  background-color: rgba(12, 14, 20, .7);
+  width: 100%;
+}
+
+.link-spanner {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  z-index: 1;
 }
