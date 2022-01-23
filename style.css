@@ -25,6 +25,10 @@ h1 {
   text-align: center;
 }
 
+h3 {
+  color: #b0ca87;
+}
+
 img, video, figure {
   width: 100%;
 }
@@ -32,6 +36,10 @@ img, video, figure {
 p, pre, h2, video, ul, figure {
   max-width: 800px;
   margin: 2em auto;
+}
+
+dt {
+  font-weight: bold;
 }
 
 img {
@@ -79,11 +87,11 @@ pre {
 */
 
 .link {
-  color: rgb(0, 136, 194);
+  color:rgb(0, 136, 194);
 }
 
 .link:visited {
-  color: rgb(200, 0, 50);
+  color:rgb(200, 0, 50);
 }
 
 .link:hover {
@@ -118,13 +126,13 @@ figcaption, video {
 
 /* thanks to JB for this */
 a:link, a:visited {
- text-decoration:none;
- transition:.35s ease-in-out;
+  text-decoration:none;
+  transition:.35s ease-in-out;
 }
 
 a:hover {
- text-decoration:none;
- transition:.10s ease-in-out;
+  text-decoration:none;
+  transition:.10s ease-in-out;
 }
 
 .textimage {

@@ -13,8 +13,66 @@
       <li class="headerli"><a href="index.html">Blog</a></li>
       <li class="headerli"><a href="about.html">About</a></li>
     </ul><title>LD49 Postmortem</title>
+<h1>Game Jam Postmortem: Ludum Dare 49</h1>
+<h3>October 2021</h3>
+<img src="assets/blog/ld49.jpg">
 <p>
-  <a class="link" href="https://www.merriam-webster.com/dictionary/postmortem">Apparently 'postmortem' is one word.</a> However, other official-seeming sources treat it as two words, or with a hyphen. Either way, I'm going to use 'postmortem' as it spares me one character of typing. Ironically, researching its spelling and writing all this will have the opposite effect. Huh.
+  (<a class="link" href="https://www.merriam-webster.com/dictionary/postmortem">Apparently, 'postmortem' is one word, not two.</a> However, other official-seeming sources treat it as two words, or with a hyphen. Either way, I'm going to use 'postmortem' as it spares me one character of typing. Ironically, researching its spelling and writing all this will have the opposite effect. Huh.)
+</p>
+<p>
+  This post will be about the development of <a class="link" href="https://ldjam.com/events/ludum-dare/49/top-texplosion">Top Texplosion</a>, a game I made in 72 hours for the <a class="link" href="https://ldjam.com/events/ludum-dare/49">Ludum Dare 49 game jam</a> (LD49).
+</p>
+<p>
+  For those who don't know what the Ludum Dare game jam is, it is a twice-annual <strong>themed</strong> game jam that takes place over the weekend in which participants must create a game "from scratch" (tools and libraries are allowed). More info <a class="link" href="https://ldjam.com/events/ludum-dare/rules">here</a>.
+</p>
+<p>
+  I recently learned about the game jam, and it seemed like a fun and productive way to spend a weekend, so I decided to participate. Despite it being my first game jam, I did little research outside of reading the rules of the jam. I went in relatively blind to what entries would look like.
+</p>
+<p>
+  The theme for LD49 was <strong>unstable</strong>. From my understanding, the theme is a more or less a suggestion- something to loosely guide the game's design. Of course, there is still the voting category of theme, so we can't stray too far from this idea. There were a lot of submissions with very creative takes on the idea of instability. Some made a pun with it (un-stable), while others had a mechanic that related (directly or indirectly) to some definition of the word.
+</p>
+<h2>Game Design</h2>
+<p>
+  The first thing I thought of &mdash; and indeed stuck with &mdash; was the idea of "unstable explosives". You might immediately think of some complex gameplay to do with it. Destruction, perhaps? A combat game with explosions? I, of course, knew better and chose the simplest thing I could imagine: launching stuff with explosions.
+</p>
+<p>
+  My next thought was what I could do with this idea. I thought of first-person gameplay consisting of carefully arranging explosives (à la a Rube Goldberg machine) to launch some key object to some destination to complete the level. In the original design, the player would be able to pick up the key and move it, along with the explosives. However, this meant that wherever the player could go, the key could too. This meant the gameplay would actually be about holding the key while launching yourself around the level with explosions.
+</p>
+<p>
+  That gameplay seemed promising, but there was still a problem. The player pretty much had to hold the key at all times to complete the level! To simplify things, I made the player the only thing that had to reach the end, no finicky companion cube thing required. More importantly, this simplified level design and programming requirements.
+</p>
+<p>
+  I decided to restrict the play area by adding an infinite lava plane at the bottom. That way, I had more control of where the player could go. It also helps indicate to the player where important areas of the level are.
+</p>
+<h2>Engine Design</h2>
+<h2>Rendering and Graphics</h2>
+<h2>Miscellanea</h2>
+<p>
+  - Physics bugs <br>
+  - Memory bugs
+</p>
+<h2>Conclusion</h2>
+<h3>What Sucked</h3>
+<p>
+  <dl>
+    <dt>Audio</dt>
+    <dt>Graphics</dt>
+  </dl>
+</p>
+<h3>What Was Mediocre</h3>
+<p>
+  <dl>
+    <dt>Tutorialization</dt>
+    <dt>Level design</dt>
+  </dl>
+</p>
+<h3>What Rocked</h3>
+<p>
+  <dl>
+    <dt>Core mechanic</dt>
+    <dt>Player controller</dt>
+    <dd>joe mama</dd>
+  </dl>
 </p>
   </body>
 </html>

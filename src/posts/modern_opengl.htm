@@ -1,0 +1,341 @@
+<title>Modern-er OpenGL</title>
+<h1>Avoiding Bugs With Modern OpenGL</h1>
+<h3>January 2022</h3>
+<img src="assets/blog/opengl.png">
+<h2>Table of Contents</h2>
+<p>
+  <ol>
+    <li><a href="#introduction" class="link">Introduction</a></li>
+    <li><a href="#dsa" class="link">Direct State Access (DSA)</a></li>
+    <li><a href="#textures" class="link">Textures</a></li>
+    <ol style="list-style-type: lower-alpha">
+      <li><a href="#texture binding" class="link">Texture Binding</a></li>
+      <li><a href="#texture creation" class="link">Texture Creation</a></li>
+      <li><a href="#texture views" class="link">Texture Views</a></li>
+      <li><a href="#sampler objects" class="link">Sampler Objects</a></li>
+    </ol>
+    <li><a href="#input" class="link">Smarter Input Assembly</a></li>
+    <li><a href="#compute" class="link">Compute Shaders for Postprocessing</a></li>
+    <li><a href="#debugging" class="link">Debugging</a></li>
+    <ol style="list-style-type: lower-alpha;">
+      <li><a href="#callback" class="link">OpenGL Debug Callback</a></li>
+      <li><a href="#tools" class="link">Graphics Debugging Tools</a></li>
+    </ol>
+    <li><a href="#future" class="link">Future Work</a></li>
+    <ol style="list-style-type: lower-alpha;">
+      <li><a href="#type safety" class="link">Addressing Type Safety</a></li>
+      <li><a href="#global state" class="link">Addressing Global State</a></li>
+    </ol>
+    <li><a href="#more" class="link">More Info</a></li>
+  </ol>
+</p>
+<h2 id="introduction">Introduction</h2>
+<p>
+  It is well known that pre-modern OpenGL (basically anything before 4.2) has problems with global state and poor separation of concerns, making it more difficult to write bug-free code. Moreover, pre-modern OpenGL code is difficult to audit the correctness of due to the global state, forcing the programmer to constantly consider the nebulous scope of API commands.
+</p>
+<p>
+  Sometimes, pre-modern OpenGL does not offer a clean idiomatic way to approach a task, so we must write code that feels hacky or suboptimal simply because there isn't a way to precisely express what we want to do (this often goes hand-in-hand with OpenGL frequently conflating functionality).
+</p>
+<p>
+  Modern OpenGL (and I mean modern, not the 12-year-old OpenGL 3.3 that tutorials call modern) solves or mitigates many of these issues. This guide meant to describe this functionality and techniques that can further help in writing robust graphics code with OpenGL.
+</p>
+<h2 id="dsa">Direct State Access (DSA)</h2>
+<p>
+  Anyone learning OpenGL should immediately notice the extra indirection required to modify objects (also known as bind-to-edit). This model is confusing, error-prone, and outdated.
+</p>
+<p>
+  OpenGL 4.5 (actually, GL_ARB_direct_state_access) furthered society by allowing us to directly specify the name of the object we want to modify (using new functions). Here is an example of how we would update some code that gets a mapped pointer from a buffer:
+<pre><code class="language-cpp">// yuck!
+glBindBuffer(GL_ARRAY_BUFFER, myBuffer);
+void* ptr = glMapBuffer(GL_ARRAY_BUFFER, GL_READ_WRITE);
+
+// yum!
+void* ptr = glMapNamedBuffer(myBuffer, GL_READ_WRITE);</code></pre>
+  <a class="link" href="https://github.com/fendevel/Guide-to-Modern-OpenGL-Functions#dsa-direct-state-access">This guide</a> shows what all the DSA functions are and how to use them (hint: it's much more straightforward than before).
+</p>
+<p>
+  With ubiquitous DSA usage, calls to <code>glBindBuffer</code> and <code>glBindTexture</code> can be entirely removed from within one's code. Calls to <code>glBindFramebuffer</code> and <code>glBindVertexArray</code> will no longer be needed at load time, but are still necessary at runtime to set rendering state.
+</p>
+<p>
+  Note that because of OpenGL's quirky create-on-bind model, you will have problems using DSA if you use any of the <code>glGen*</code> functions to create objects. Instead, you should use the <code>glCreate*</code> family of functions, which initialize objects with default values instead of merely generating a name.
+</p>
+<h2 id="textures">Textures</h2>
+<p>
+  Textures, like much of OpenGL, are the product of decisions that made sense long ago. Those decisions led to an API that, these days, is unergonomic at best, and error-prone at worst. Luckily, modern OpenGL offers a variety of ways to increase our sanity when using them.
+</p>
+<h3 id="texture binding">Texture Binding</h3>
+<p>
+  This may look familiar:
+<pre><code class="language-cpp">glActiveTexture(GL_TEXTURE0);
+glBindTexture(GL_TEXTURE_2D, myTex);</code></pre>
+  In OpenGL 4.5+, we can replace it with the following:
+<pre><code class="language-cpp">glBindTextureUnit(0, myTex);</code></pre>
+  Exquisite.
+</p>
+<p>
+  Additionally, samplers and other opaque shader types can be given explicit binding points (as of OpenGL 4.2). The following declaration matches the binding that was made above:
+  <pre><code class="language-glsl">layout(binding = 0) uniform sampler2D myTex;</code></pre>
+  I suggest using this feature if you want to avoid calling <code>glUniform1i</code> to set sampler binding points.
+</p>
+<h3 id="texture creation">Texture Creation</h3>
+<p>
+  Preferring <a class="link" href="https://www.khronos.org/opengl/wiki/Texture_Storage#Immutable_storage">immutable storage</a> offers a number of benefits. First, immutable storage requires us to specify all of the memory the texture will use up front. This reduces driver work and prevents strange behavior from the programmer (different internal formats for each mip, weird mip sizes, unsized internal formats). Separating the allocation and the upload of the texture also makes code easier to read and write. We can transform our old code as so:
+<pre><code class="language-cpp">// old, crusty
+GLuint myTex;
+glGenTextures(GL_TEXTURE_2D, &myTex);
+glBindTexture(GL_TEXTURE_2D, myTex);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+// new, shiny
+GLuint myTex;
+glCreateTextures(GL_TEXTURE_2D, 1, &myTex);
+glTextureStorage2D(myTex, 1, GL_RGBA8, width, height);
+glTextureSubImage2D(myTex, 0, 0, 0, width, height, GL_UNSIGNED_BYTE, GL_RGBA, pixels);</code></pre>
+</p>
+<h3 id="texture views">Texture Views</h3>
+<p>
+  Texture objects in OpenGL have overloaded functionality. To have the equivalent in an explicit API, we would need three objects: texture memory, a texture view, and a sampler. Sometimes it can be convenient to have all this bundled into one object, but usually it increases code complexity unnecessarily.
+</p>
+<p>
+  Available from OpenGL 4.3, a texture view is essentially a reference to some other texture memory. Texture views have the flexibility to:
+  <ul>
+    <li>Treat a single face of a cubemap as a 2D texture</li>
+    <li>Treat a single slice of an array texture as its own (non-array) texture</li>
+    <li>Treat a single mip of a texture as its own texture</li>
+    <li>Treat a texture as another texture with a different internal format</li>
+  </ul>
+  It should be noted that views of textures can only be made if the texture's memory is immutable (see the previous subsection). Here is an example of making a 2D view of the 50th slice of a 2D array texture:
+  <pre><code class="language-cpp">GLuint myTex;
+glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &myTex);
+glTextureStorage3D(myTex, 1, GL_R32F, 128, 128, 128);
+
+GLuint myTexView;
+glGenTextures(1, &myTexView);
+glTextureView(myTexView, GL_TEXTURE_2D, myTex, GL_R32F, 0, 1, 49, 1);</code></pre>
+  I prefer to use texture views over raw textures as a means of unifying my texture abstraction.
+</p>
+<p>
+  Note that texture views are quite cheap to create as they don't require a memory allocation.
+</p>
+<h3 id="sampler objects">Sampler Objects</h3>
+<p>
+  Introduced in OpenGL 3.3, sampler objects aren't a very new feature. However, I rarely see them being used despite the advantages they bring.
+</p>
+<p>
+  Sampler objects are used to describe a sampler state, as one might suspect by the name. This includes the following state:
+  <ul>
+    <li>Min and mag filtering modes</li>
+    <li>Anisotropic filtering level</li>
+    <li>LOD range</li>
+    <li>LOD bias</li>
+    <li>Comparison operator (for shadow samplers)</li>
+    <li>Wrap mode</li>
+    <li>Seamless cubemap filtering</li>
+  </ul>
+  Samplers can be bound to texture units, and override the texture's built-in sampler when done so.
+</p>
+<p>
+  Unless you have a very weird renderer, your draws will benefit from sampler reuse. Despite this, it's a common idiom in OpenGL to create a texture and immediately set some common sampler state like in the following:
+<pre><code class="language-cpp">GLuint myTex;
+glGenTextures(1, &myTex);
+glBindTexture(GL_TEXTURE_2D, myTex);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);</code></pre>
+</p>
+<p>
+  This is an issue because it conflates a texture with how it will be used. If we want to sample the same texture with two different samplers in the same frame, we must remember to set all the affected state in each place. With sampler objects, you just create one for each pass and bind it before drawing- no runtime sampler state changes required!
+</p>
+<p>
+  The other issue is that having a sampler state for each texture leads to code duplication and inflexibility. If we want to change a sampler parameter (such as anisotropic filtering) for objects rendered in a specific pass, sampler objects make it easy. All you have to do is modify the respective sampler objects used in the pass.
+</p>
+<p>
+  As such, sampler objects allow us to write <a class="link" href="https://en.wikipedia.org/wiki/Pure_function">purer</a> code (and thus fewer bugs):
+</p>
+<pre><code class="language-cpp">GLuint samplerFoo;
+GLuint samplerBar;
+GLuint myTex;
+
+void InitFoo()
+{
+  glCreateSamplers(1, &samplerFoo);
+  glSamplerParameteri(samplerFoo, ..., ...);
+}
+
+void InitBar()
+{
+  glCreateSamplers(1, &samplerBar);
+  glSamplerParameteri(samplerBar, ..., ...);
+}
+
+void RenderFoo()
+{
+  glBindSampler(0, samplerFoo);
+  glBindTextureUnit(0, myTex);
+  // draw some stuff
+}
+
+void RenderBar()
+{
+  glBindSampler(0, samplerBar);
+  glBindTextureUnit(0, myTex);
+  // draw some other stuff
+}</code></pre>
+  The only potential for error is in forgetting to unbind a sampler when using both discrete samplers objects and built-in texture samplers. Therefore, when introducing sampler objects, I would suggest replacing all instances of <code>glBindTextureUnit</code> (and <code>glActiveTexture</code> + <code>glBindTexture</code>) with the following function:
+<pre><code class="language-cpp">void BindTextureSampler(GLuint unit, GLuint texture, GLuint sampler)
+{
+  glBindTextureUnit(unit, texture);
+  glBindSampler(unit, sampler)
+}</code></pre>
+  This enforces the use of samplers and makes it more difficult to accidentally bind a texture without a sampler (or vice versa).
+</p>
+<p>
+  Note that samplers are also very cheap to create and destroy (on the Nvidia and AMD drivers I tested).
+</p>
+<h2 id="input">Smarter Input Assembly</h2>
+<p>
+  VAOs are a major source of confusion among beginners. Not only that, they also don't fit cleanly into a renderer. We often wish to draw several meshes with the same shader and vertex format. However, pre-4.3 OpenGL only offers the following ways to reasonably accomplish this:
+  <ul>
+    <li>Have one VAO per object or mesh and bind it when drawing that object</li>
+    <li>Have one VAO that is fully respecified each time we wish to draw another mesh</li>
+    <li>Have a single VAO and vertex+index buffer per vertex attribute layout, stuff all meshes into those, and draw with <code>glDrawElementsBaseVertex</code></li>
+  </ul>
+</p>
+<p>
+  Fortunately, OpenGL 4.3 adds <a class="link" href="https://www.khronos.org/opengl/wiki/Vertex_Specification#Separate_attribute_format">a way to separate</a> the vertex attribute format from its buffer binding. This eliminates a source of error and makes the code easier to read. This also allows us to have a single VAO per vertex layout (or shader). The initialization code for them will not have to reference a single buffer! At runtime, we can choose which buffer(s) to use with <code>glVertexArrayVertexBuffer</code> and <code>glVertexArrayElementBuffer</code>.
+</p>
+<p>
+  I will once again shill <a class="link" href="https://github.com/fendevel/Guide-to-Modern-OpenGL-Functions#glvertexattribformat--glbindvertexbuffer">fendevel's sweet modern OpenGL guide</a>, which explains how these functions work in action.
+</p>
+<h2 id="compute">Compute Shaders for Postprocessing</h2>
+<p>
+  Typically, full screen passes and other passes that operate on pixels of a texture are implemented by rasterizing a full screen quad or triangle, then doing the algorithmic work inside of a fragment shader. Before such passes, you need to make sure the OpenGL state can faciliate this: set the depth test to <code>GL_ALWAYS</code>, disable depth writes, bind a VAO and a shader that is set up with a simple vertex shader and the fragment shader you care about, bind a framebuffer with the target texture, and the viewport is set. Oh, and there is <i>still</i> some unmentioned state that can cause your draw to not appear correctly. What could go wrong?
+</p>
+<p>
+  Beginning in OpenGL 4.3, compute shaders (due to their general-purpose nature) allow us to cleanly express "do some operation on each pixel of a texture", which is frequent in post processing pipelines. On the host (CPU) side, we just need to do the following unique steps before dispatching (executing) the shader:
+  <ul>
+    <li>Calculate the number of work groups we want to dispatch</li>
+    <li>Issue a memory barrier after the dispatch to make writes visible to future passes</li>
+  </ul>
+  Compared to setting pipeline state, this is nothing. Everything else (binding the shader, specifying shader input and output) proceeds as usual. We can now write a function that is more or less isolated from global state:
+<pre><code class="language-cpp">void ApplyEffect(GLuint sourceTexture, GLuint targetTexture, GLuint sourceSampler, 
+                 GLuint computeProgram, int texWidth, int texHeight)
+{
+  glUseProgram(computeProgram);
+  
+  // shader input
+  glProgramUniform2i(computeProgram, texWidth, texHeight);
+  glBindSampler(0, sourceSampler);
+  glBindTextureUnit(0, sourceTexture);
+
+  // shader output
+  glBindImageTextures(0, 1, &targetTexture); // this function is in OpenGL 4.4, use glBindImageTexture in older versions
+
+  // hard-coded local_size, could be reflected from the shader at load time
+  const int local_size = 16;
+  const int numGroupsX = (texWidth + local_size - 1) / local_size;
+  const int numGroupsY = (texHeight + local_size - 1) / local_size;
+  glDispatchCompute(numGroupsX, numGroupsY, 1);
+
+  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+}</code></pre>
+  On the GPU side, there are a few more things we need to do given that we can't use automatic interpolation to assign each pixel a UV.
+<pre><code class="language-glsl">#version 440 core
+
+// input
+layout(binding = 0) uniform sampler2D s_source;
+uniform ivec2 u_texDim;
+
+// output
+layout(binding = 0) uniform writeonly image2D i_target;
+
+layout(local_size_x = 16, local_size_y = 16) in; // hardcoded-but-sane work group size
+void main()
+{
+  // get global ID and return if out of bounds (we can only dispatch threads at work group granularity)
+  ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(gid, u_texDim)))
+    return;
+
+  // calculate the UV using this thread's global ID
+  vec2 uv = (vec2(gid) + 0.5) / u_texDim;
+
+  // the "meat" of the shader (where the effect is implemented)
+  vec4 mySample = textureLod(s_source, uv, 0);
+  vec4 finalColor = // do some operation on mySample
+
+  imageStore(i_target, gid, finalColor);
+}</code></pre>
+  There are other advantages to using compute shaders (such as shared memory and thread swizzling) that I won't get into here. The Khronos OpenGL wiki has a <a class="link" href="https://www.khronos.org/opengl/wiki/Compute_Shader">nice reference</a> for using compute shaders in OpenGL. For GPGPU techniques and info on GPU hardware, there exists plenty of online resources. I would recommend taking a look at the <a class="link" href="https://gpuopen.com/learn/">Learn section</a> of GPUopen for starters.
+</p>
+<p>
+  One disadvantage of using compute shaders is that we can no longer reliably use non-Lod, non-Grad texture sampling functions. Why? According to the GLSL spec, implicit derivatives are undefined in non-fragment stages. In other words, it's extremely easy to invoke undefined behavior when using a function as basic as <code>texture</code> in a compute shader. For this reason, all texture fetches should be ones with "Lod" or "Grad" in the name (<code>textureLod</code> should cover most of your bases). <code>texelFetch</code> and <code>imageLoad</code> are unaffected as they retrieve texels without filtering.
+</p>
+<h2 id="debugging">Debugging</h2>
+<h3 id="callback">OpenGL Debug Callback</h3>
+<p>
+  This doesn't need a lengthy explanation, as other guides have covered this extensively. I will once again link <a class="link" href="https://github.com/fendevel/Guide-to-Modern-OpenGL-Functions#detailed-messages-with-debug-output">fendevel's guide</a> to show you how to use <code>glDebugMessageCallback</code>. This unilaterally surpasses <code>GL_CHECK</code> macros and anything involving <code>glGetError</code> in usability and helpfulness.
+</p>
+<h3 id="tools">Graphics Debugging Tools</h3>
+<p>
+  These aren't a part of OpenGL, but I will nonetheless briefly cover them as it feels important enough.
+</p>
+<p>
+  Modern frame debugging tools give us a comprehensive view of our application's graphics API state and all of our API resources at any point during a frame. This can be useful any time we are wondering why something isn't rendering correctly (which is often, to be frank).
+</p>
+<p>
+  There are a few premiere tools to choose from depending on your hardware and usage of OpenGL:
+  <ul>
+    <li><a class="link" href="https://renderdoc.org/docs/getting_started/quick_start.html">RenderDoc</a>: a simple, yet powerful cross-platform debugger for core OpenGL</li>
+    <li><a class="link" href="https://developer.nvidia.com/nsight-graphics">Nsight Graphics</a>: a powerful debugger and profiler for Nvidia GPUs. Not as easy to use as RenderDoc, but supports some OpenGL extensions as well as profiling</li>
+    <li><a class="link" href="https://www.intel.com/content/www/us/en/developer/tools/graphics-performance-analyzers/overview.html">Intel GPA</a>: admittedly, I know very little about this tool. It's a cross-platform graphics debugger with profiling capabilities, but I assume profiling is restricted to Intel iGPUs</li>
+  </ul>
+  Note: a common issue beginners encounter with using graphics debuggers is that the debugger will assume a different working directory than what the programmer expects. This is often caused by IDEs (particularly Visual Studio) setting the working directory to be the same as the project directory, which causes the application to fail when it is unable to loaded certain files (like shaders). On all debuggers, there is an option adjacent to the application path to specify a working directory.
+</p>
+<p>
+  If you aren't already, start using at least one graphics debugger. It will save you from many hours of staring at code and wondering why it isn't working. It's no different than CPU debugging in that regard.
+</p>
+<h2 id="future">Future Work</h2>
+<p>
+  Although modern OpenGL addresses many issues had with its previous iterations, there still exist some "features" that can cause issues for the average user.
+  <ul>
+    <li>Unsigned integers for objects (poor type safety)</li>
+    <li>Global pipeline state</li>
+    <li>Global binds</li>
+  </ul>
+  It's good to be aware of these so we can build better abstractions and write safer code.
+</p>
+<h3 id="type safety">Addressing Type Safety</h3>
+<p>
+  A simple and effective way to address the lack of type safety is to make type wrappers. Even a simple struct containing an unsigned int will stop the majority of cases where object types are confused.
+<pre><code class="language-cpp">struct Texture { GLuint id; };
+struct Buffer { GLuint id; };
+
+void RenderMesh(Texture tex, Buffer buf) { ... }</code></pre>
+  But why stop at simple type wrappers when we have expressive languages? DSA functions can be trivially abstracted as class methods.
+  These classes can also be used to automatically clean up API objects at the end of their lifetime (given copy and move semantics are carefully considered).
+</p>
+<h3 id="global state">Addressing Global State</h3>
+<p>
+  Addressing the global state is a much more difficult problem. Essentially, we want to constrain certain operations (<code>glDraw*</code> calls in particular) to be called only in scopes in which we have explicitly defined. More simply, this means we need to create something similar to Vulkan's <code>vkPipeline</code> to hold some pipeline state, and <code>vkCmdBeginRenderPass</code> and <code>vkCmdEndRenderPass</code> to specify a scope in which we wish to use that state. Then, we need to require certain commands (draw commands in particular) to take place inside of that scope.
+</p>
+<p>
+  I drafted how it may look to use an API that implements this paradigm:
+<pre><code class="language-cpp">// describes state such as viewport, scissor, blending, framebuffer, etc.
+GraphicsPipelineInfo myPipelineInfo = GetMyPipelineInfo();
+
+BeginRenderPass(myPipelineInfo);
+  BindShaderProgram(...);
+  BindVertexFormat(...);
+  BindVertexBuffer(...);
+  DrawElements(...); // okay, we are inside a render pass
+EndRenderPass();
+
+DrawElements(...);   // error! we are outside a render pass</code></pre>
+  When done properly, this will make it much harder to leak state at the expense of increased verbosity. This method will also create a lot of redundant state-setting, so it may be necessary to implement your own global state tracker for optimality. Any further description is outside the scope of this guide, so I'll leave it as an exercise for the reader :)
+</p>
+<h2 id="more">More Info</h2>
+<p>
+  <a class="link" href="https://www.khronos.org/opengl/wiki/History_of_OpenGL">The history of OpenGL</a> is great for browsing and discovering new features.
+</p>
