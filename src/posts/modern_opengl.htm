@@ -34,7 +34,7 @@
   It is well known that pre-modern OpenGL (basically anything before 4.2) has problems with global state and poor separation of concerns, making it more difficult to write bug-free code. Moreover, pre-modern OpenGL code is difficult to audit the correctness of due to the global state, forcing the programmer to constantly consider the nebulous scope of API commands.
 </p>
 <p>
-  Sometimes, pre-modern OpenGL does not offer a clean idiomatic way to approach a task, so we must write code that feels hacky or suboptimal simply because there isn't a way to precisely express what we want to do (this often goes hand-in-hand with OpenGL frequently conflating functionality).
+  Sometimes, pre-modern OpenGL does not offer a clean, idiomatic way to approach a task, so we must write code that feels hacky or suboptimal simply because there isn't a way to precisely express what we want to do (this often goes hand-in-hand with OpenGL frequently conflating functionality).
 </p>
 <p>
   Modern OpenGL (and I mean modern, not the 12-year-old OpenGL 3.3 that tutorials call modern) solves or mitigates many of these issues. This guide meant to describe this functionality and techniques that can further help in writing robust graphics code with OpenGL.
