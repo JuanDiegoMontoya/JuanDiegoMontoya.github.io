@@ -94,15 +94,15 @@ glTextureSubImage2D(myTex, 0, 0, 0, width, height, GL_UNSIGNED_BYTE, GL_RGBA, pi
 </p>
 <h3 id="texture views">Texture Views</h3>
 <p>
-  Texture objects in OpenGL have overloaded functionality. To have the equivalent in an explicit API, we would need three objects: texture memory, a texture view, and a sampler. Sometimes it can be convenient to have all this bundled into one object, but usually it increases code complexity unnecessarily.
+  Texture objects in OpenGL have overloaded functionality. To have the equivalent in an explicit API, we would need three objects: texture memory, a texture view, and a sampler. Sometimes it can be convenient to have all this bundled into one object, but usually it increases code complexity.
 </p>
 <p>
-  Available from OpenGL 4.3, a texture view is essentially a reference to some other texture memory. Texture views have the flexibility to:
+  Available from OpenGL 4.3, a texture view is essentially a reference to some other texture memory. A few things texture views can achieve are:
   <ul>
-    <li>Treat a single face of a cubemap as a 2D texture</li>
-    <li>Treat a single slice of an array texture as its own (non-array) texture</li>
-    <li>Treat a single mip of a texture as its own texture</li>
-    <li>Treat a texture as another texture with a different internal format</li>
+    <li>Treating a single face of a cubemap as a 2D texture</li>
+    <li>Treating a single slice of an array texture as its own (non-array) texture</li>
+    <li>Treating a single mip of a texture as its own texture</li>
+    <li>Treating a texture as another texture with a different (same size) internal format</li>
   </ul>
   It should be noted that views of textures can only be made if the texture's memory is immutable (see the previous subsection). Here is an example of making a 2D view of the 50th slice of a 2D array texture:
   <pre><code class="language-cpp">GLuint myTex;

@@ -13,7 +13,7 @@
       <li class="headerli"><a href="index.html">Blog</a></li>
       <li class="headerli"><a href="about.html">About</a></li>
     </ul><title>Modern-er OpenGL</title>
-<h1>Avoiding Bugs With Modern OpenGL</h1>
+<h1>Avoiding Bugs with Modern OpenGL</h1>
 <h3>January 2022</h3>
 <img src="assets/blog/opengl.png">
 <h2>Table of Contents</h2>
@@ -48,7 +48,7 @@
   It is well known that pre-modern OpenGL (basically anything before 4.2) has problems with global state and poor separation of concerns, making it more difficult to write bug-free code. Moreover, pre-modern OpenGL code is difficult to audit the correctness of due to the global state, forcing the programmer to constantly consider the nebulous scope of API commands.
 </p>
 <p>
-  Sometimes, pre-modern OpenGL does not offer a clean idiomatic way to approach a task, so we must write code that feels hacky or suboptimal simply because there isn't a way to precisely express what we want to do (this often goes hand-in-hand with OpenGL frequently conflating functionality).
+  Sometimes, pre-modern OpenGL does not offer a clean, idiomatic way to approach a task, so we must write code that feels hacky or suboptimal simply because there isn't a way to precisely express what we want to do (this often goes hand-in-hand with OpenGL frequently conflating functionality).
 </p>
 <p>
   Modern OpenGL (and I mean modern, not the 12-year-old OpenGL 3.3 that tutorials call modern) solves or mitigates many of these issues. This guide meant to describe this functionality and techniques that can further help in writing robust graphics code with OpenGL.
@@ -108,15 +108,15 @@ glTextureSubImage2D(myTex, 0, 0, 0, width, height, GL_UNSIGNED_BYTE, GL_RGBA, pi
 </p>
 <h3 id="texture views">Texture Views</h3>
 <p>
-  Texture objects in OpenGL have overloaded functionality. To have the equivalent in an explicit API, we would need three objects: texture memory, a texture view, and a sampler. Sometimes it can be convenient to have all this bundled into one object, but usually it increases code complexity unnecessarily.
+  Texture objects in OpenGL have overloaded functionality. To have the equivalent in an explicit API, we would need three objects: texture memory, a texture view, and a sampler. Sometimes it can be convenient to have all this bundled into one object, but usually it increases code complexity.
 </p>
 <p>
-  Available from OpenGL 4.3, a texture view is essentially a reference to some other texture memory. Texture views have the flexibility to:
+  Available from OpenGL 4.3, a texture view is essentially a reference to some other texture memory. A few things texture views can achieve are:
   <ul>
-    <li>Treat a single face of a cubemap as a 2D texture</li>
-    <li>Treat a single slice of an array texture as its own (non-array) texture</li>
-    <li>Treat a single mip of a texture as its own texture</li>
-    <li>Treat a texture as another texture with a different internal format</li>
+    <li>Treating a single face of a cubemap as a 2D texture</li>
+    <li>Treating a single slice of an array texture as its own (non-array) texture</li>
+    <li>Treating a single mip of a texture as its own texture</li>
+    <li>Treating a texture as another texture with a different (same size) internal format</li>
   </ul>
   It should be noted that views of textures can only be made if the texture's memory is immutable (see the previous subsection). Here is an example of making a 2D view of the 50th slice of a 2D array texture:
   <pre><code class="language-cpp">GLuint myTex;
