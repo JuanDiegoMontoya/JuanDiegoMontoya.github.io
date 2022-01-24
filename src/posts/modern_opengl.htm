@@ -115,7 +115,7 @@ glTextureView(myTexView, GL_TEXTURE_2D, myTex, GL_R32F, 0, 1, 49, 1);</code></pr
   I prefer to use texture views over raw textures as a means of unifying my texture abstraction.
 </p>
 <p>
-  Note that texture views are quite cheap to create as they don't require a memory allocation.
+  Note that texture views are quite cheap to create as they don't require a device memory allocation.
 </p>
 <h3 id="sampler objects">Sampler Objects</h3>
 <p>
@@ -148,7 +148,7 @@ glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);</code></pre>
   This is an issue because it conflates a texture with how it will be used. If we want to sample the same texture with two different samplers in the same frame, we must remember to set all the affected state in each place. With sampler objects, you just create one for each pass and bind it before drawing- no runtime sampler state changes required!
 </p>
 <p>
-  The other issue is that having a sampler state for each texture leads to code duplication and inflexibility. If we want to change a sampler parameter (such as anisotropic filtering) for objects rendered in a specific pass, sampler objects make it easy. All you have to do is modify the respective sampler objects used in the pass.
+  The other issue is that having a sampler state for each texture leads to code duplication and inflexibility. If we want to change a sampler parameter (such as anisotropic filtering) for objects rendered in a specific pass, each affected texture must be modified. With sampler objects, all you have to do is modify the respective ones used in the pass.
 </p>
 <p>
   As such, sampler objects allow us to write <a class="link" href="https://en.wikipedia.org/wiki/Pure_function">purer</a> code (and thus fewer bugs):
@@ -182,7 +182,7 @@ void RenderBar()
   glBindTextureUnit(0, myTex);
   // draw some other stuff
 }</code></pre>
-  The only potential for error is in forgetting to unbind a sampler when using both discrete samplers objects and built-in texture samplers. Therefore, when introducing sampler objects, I would suggest replacing all instances of <code>glBindTextureUnit</code> (and <code>glActiveTexture</code> + <code>glBindTexture</code>) with the following function:
+  The only potential for error is in forgetting to unbind a sampler when using both discrete samplers objects and built-in texture samplers. Therefore, when introducing sampler objects, I would suggest replacing all instances of <code>glBindTextureUnit</code> (and <code>glActiveTexture</code> + <code>glBindTexture</code>) with something similar to the following:
 <pre><code class="language-cpp">void BindTextureSampler(GLuint unit, GLuint texture, GLuint sampler)
 {
   glBindTextureUnit(unit, texture);
@@ -210,7 +210,7 @@ void RenderBar()
 </p>
 <h2 id="compute">Compute Shaders for Postprocessing</h2>
 <p>
-  Typically, full screen passes and other passes that operate on pixels of a texture are implemented by rasterizing a full screen quad or triangle, then doing the algorithmic work inside of a fragment shader. Before such passes, you need to make sure the OpenGL state can faciliate this: set the depth test to <code>GL_ALWAYS</code>, disable depth writes, bind a VAO and a shader that is set up with a simple vertex shader and the fragment shader you care about, bind a framebuffer with the target texture, and the viewport is set. Oh, and there is <i>still</i> some unmentioned state that can cause your draw to not appear correctly. What could go wrong?
+  Typically, full screen passes and other passes that operate on pixels of a texture are implemented by rasterizing a full screen quad or triangle, then doing the algorithmic work inside of a fragment shader. Before such passes, you need to make sure the OpenGL state can faciliate this: set the depth test to <code>GL_ALWAYS</code>, disable depth writes, bind a VAO and a shader that is set up with a simple vertex shader and the fragment shader you care about, bind a framebuffer with the target texture, and the viewport is set. That isn't even all the state that can cause your simple quad to not appear correctly. What could go wrong?
 </p>
 <p>
   Beginning in OpenGL 4.3, compute shaders (due to their general-purpose nature) allow us to cleanly express "do some operation on each pixel of a texture", which is frequent in post processing pipelines. On the host (CPU) side, we just need to do the following unique steps before dispatching (executing) the shader:
@@ -218,7 +218,7 @@ void RenderBar()
     <li>Calculate the number of work groups we want to dispatch</li>
     <li>Issue a memory barrier after the dispatch to make writes visible to future passes</li>
   </ul>
-  Compared to setting pipeline state, this is nothing. Everything else (binding the shader, specifying shader input and output) proceeds as usual. We can now write a function that is more or less isolated from global state:
+  Compared to setting graphics pipeline state, this is nothing. Everything else (binding the shader, specifying shader input and output) proceeds as usual. We can now write a function that is more or less isolated from global state:
 <pre><code class="language-cpp">void ApplyEffect(GLuint sourceTexture, GLuint targetTexture, GLuint sourceSampler, 
                  GLuint computeProgram, int texWidth, int texHeight)
 {
@@ -258,7 +258,7 @@ void main()
   if (any(greaterThanEqual(gid, u_texDim)))
     return;
 
-  // calculate the UV using this thread's global ID
+  // calculate the UV of the center of a pixel using this thread's global ID
   vec2 uv = (vec2(gid) + 0.5) / u_texDim;
 
   // the "meat" of the shader (where the effect is implemented)
@@ -267,7 +267,7 @@ void main()
 
   imageStore(i_target, gid, finalColor);
 }</code></pre>
-  There are other advantages to using compute shaders (such as shared memory and thread swizzling) that I won't get into here. The Khronos OpenGL wiki has a <a class="link" href="https://www.khronos.org/opengl/wiki/Compute_Shader">nice reference</a> for using compute shaders in OpenGL. For GPGPU techniques and info on GPU hardware, there exists plenty of online resources. I would recommend taking a look at the <a class="link" href="https://gpuopen.com/learn/">Learn section</a> of GPUopen for starters.
+  There are other advantages to using compute shaders (such as shared memory and thread swizzling) that I won't get into here. The Khronos OpenGL wiki has a <a class="link" href="https://www.khronos.org/opengl/wiki/Compute_Shader">nice reference</a> for using compute shaders in OpenGL. For GPGPU techniques and info on GPU hardware, there exists plenty of online resources. I would recommend taking a look at the <a class="link" href="https://gpuopen.com/learn/">Learn section of GPUopen</a> for starters.
 </p>
 <p>
   One disadvantage of using compute shaders is that we can no longer reliably use non-Lod, non-Grad texture sampling functions. Why? According to the GLSL spec, implicit derivatives are undefined in non-fragment stages. In other words, it's extremely easy to invoke undefined behavior when using a function as basic as <code>texture</code> in a compute shader. For this reason, all texture fetches should be ones with "Lod" or "Grad" in the name (<code>textureLod</code> should cover most of your bases). <code>texelFetch</code> and <code>imageLoad</code> are unaffected as they retrieve texels without filtering.
@@ -314,7 +314,7 @@ struct Buffer { GLuint id; };
 
 void RenderMesh(Texture tex, Buffer buf) { ... }</code></pre>
   But why stop at simple type wrappers when we have expressive languages? DSA functions can be trivially abstracted as class methods.
-  These classes can also be used to automatically clean up API objects at the end of their lifetime (given copy and move semantics are carefully considered).
+  These classes can also be used to automatically clean up API objects at the end of their lifetime, given copy and move semantics are carefully considered.
 </p>
 <h3 id="global state">Addressing Global State</h3>
 <p>
