@@ -20,6 +20,7 @@
   <li><a href="#conclusion" class="link">Conclusion</a></li>
   <li><a href="#code" class="link">Code</a></li>
   <li><a href="#future-work" class="link">Future Work</a></li>
+  <li><a href="#addendum" class="link">Addendum</a></li>
 </ol>
 <h2 id="introduction">Introduction</h2>
 <p>
@@ -133,7 +134,7 @@ glClearNamedBufferSubData(emitter.indirectDrawBuffer, GL_R32UI,
 </p>
 <pre><code class="language-glsl">Particle particle = particles[drawIndices[gl_InstanceID]];</code></pre>
 <p>
-  With this, we gained the ability to select which particles are drawn on a per-particle basis. However, we actually introduced a problem with this! With the extra layer of indirection, we have made it so that the vertex shader no longer accesses the particle array in a linear manner, as two adjacent indices may point to any particle in the array. When nearly all particles are alive, we do not get much benefit from using indices, and the incoherent accesses will cause more cache misses than before.
+  With this, we gained the ability to select which particles are drawn on an individual basis. However, we actually introduced a problem with this! With the extra layer of indirection, we have made it so that the vertex shader no longer accesses the particle array in a linear manner, as two adjacent indices may point to any particle in the array. When nearly all particles are alive, we do not get much benefit from using indices, and the incoherent accesses will cause more cache misses than before.
 </p>
 <p>
   We will see an additional optimization this indirection enables in the next section.
@@ -394,7 +395,7 @@ void main() {
   We started with 10 million particles taking 26.97ms per frame, and we ended with them taking only 7.38ms per frame. By itself, that is the difference between 37 and 136 FPS. I would say that result is worth the effort! Now, if I were to use my engine to develop a game (ha ha ha), I would not have to worry much about overuse of particles leading to poor performance. It also gives room for other graphical effects. We can also see that not all optimizations are equal. Some, like particle culling, were extremely easy to implement while having a large benefit on performance. Others, like using shared memory, are tricky to implement and provide a questionable performance uplift.
 </p>
 <p>
-  In conclusion, know your data! When implementing a high-throughput system for the GPU, it's very easy to become bandwidth limited. This is especially true when you are doing very little arithmetic work on each piece of data (like here). The most effective optimizations were conceived through simple observations about the data.
+  In conclusion, know your data! When implementing a high-throughput system for the GPU, it's very easy to become bandwidth limited. This is especially true when you are doing very little arithmetic work on each piece of data, like I did here. The most effective optimizations were conceived through simple observations about the data.
 </p>
 <p>
   Hopefully this post was informative. Thanks for reading!
@@ -423,6 +424,38 @@ void main() {
   <li><strong>Buffer coalescing</strong>: each emitter requires six buffers, which leads to excessive buffer creation and destruction with many emitters. Instead, we could allocate sections of one or more stretchy buffers. This may lead to reduced driver overhead at the expense of more difficult buffer management.</li>
   <li><strong>Wave/subgroup intrinsics</strong>: <a href="https://www.khronos.org/blog/vulkan-subgroup-tutorial" class="link">Vulkan</a> and <a href="https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/hlsl-shader-model-6-0-features-for-direct3d-12#shading-language-intrinsics" class="link">D3D12</a> expose intrinsics that let us leverage coherent execution between threads at the wave level. Its main benefit is allowing us to replace the shared memory and barriers with fewer wave-wide instructions.</li>
 </ul>
+<h2 id="addendum">Addendum</h2>
 <p>
-  I am accepting suggestions for improvements for this blog. Just contact me on GitHub, or on Discord if you know me. Special thanks martty for his ideas on revising this post, and thanks to GPVM for tolerating my ill-prepared presentation on this :)
+  As it turns out, modern shader compilers will automatically perform wave-level aggregation of atomics under certain circumstances. This might explain why the shared memory "optimization" explained earlier was not very effective. In <a href="https://developer.nvidia.com/blog/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/" class="link">this Nvidia developer blog post</a>, it's mentioned at the top.
+</p>
+<p>
+  AMD doesn't (to my knowledge) directly say whether this optimization is done on their hardware, but with their tools we can determine this ourselves. Throwing a trivial compute shader utilizing atomics into <a href="https://gpuopen.com/rga/" class="link">RGA</a> gives us some insight on the situation. Let's look at the assembly generated by the following code:
+</p>
+<pre><code>#version 450
+
+layout(binding = 0) buffer FooBuffer {
+    uint fooData;
+};
+
+layout(local_size_x = 64) in;
+void main() {
+    atomicAdd(fooData, gl_GlobalInvocationID.x);
+}
+</code></pre>
+<img src="assets/atomic_auto_wave_reduction_1.png">
+<p>
+  This looks complex, but we only need to see a few instructions to have an idea of what's going on.
+</p>
+<p>
+  <code>s_and_saveexec_b64</code>, <code>v_permlanex16_b32</code>, and <code>v_readlane_b32</code> tell us that <i>something</i> is happening with the execution mask and that there is some cross-lane communication going on. From our prior knowledge, we can safely guess that this code is performing some kind of wave-wide reduction, then doing the atomic add with just one active lane. If you want to convince yourself, look at <a href="https://developer.amd.com/wp-content/resources/RDNA2_Shader_ISA_November2020.pdf" class="link">the manual</a> and simulate the code manually.
+</p>
+<p>
+  Another thing to note is that not every atomic operation can be automatically coalesced like this. If we change the atomic operation to an order-dependent one, the compiler cannot perform this reduction. Let's observe the assembly as we swap the <code>atomicAdd</code> out for <code>atomicExchange</code>.
+</p>
+<img src="assets/atomic_auto_wave_reduction_2.png">
+<p>
+  The assembly is much shorter! It's also closer to what you might expect the compiler to output for this code with no execution mask or cross-lane trickery. This gives us more confidence that the <code>atomicAdd</code> version really is specially optimized.
+</p>
+<p>
+  I am accepting suggestions for improvements for this blog. Just contact me on GitHub, or on Discord if you know me. Special thanks to martty for his ideas on revising this post, and thanks to GPVM for tolerating my ill-prepared presentation on this :)
 </p>
