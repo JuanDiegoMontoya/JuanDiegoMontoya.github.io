@@ -13,7 +13,7 @@
       <li class="headerli"><a href="index.html">Blog</a></li>
       <li class="headerli"><a href="about.html">About</a></li>
     </ul><title>Modern-er OpenGL</title>
-<h1>Using Modern OpenGL to Avoid Common Errors</h1>
+<h1>Best Practices for Modern OpenGL</h1>
 <h3>January 2022</h3>
 <img src="assets/blog/opengl.png">
 <h2>Table of Contents</h2>
@@ -41,6 +41,7 @@
       <li><a href="#global state" class="link">Addressing Global State</a></li>
     </ol>
     <li><a href="#more" class="link">More Info</a></li>
+    <li><a href="#addendum" class="link">Addendum</a></li>
   </ol>
 </p>
 <h2 id="introduction">Introduction</h2>
@@ -138,18 +139,23 @@ glTextureView(myTexView, GL_TEXTURE_2D, myTex, GL_R32F, 0, 1, 49, 1);</code></pr
 <p>
   Sampler objects are used to describe a sampler state, as one might suspect by the name. This includes the following state:
   <ul>
-    <li>Min and mag filtering modes</li>
+    <li>Min, mag, and mipmap filtering modes</li>
     <li>Anisotropic filtering level</li>
     <li>LOD range</li>
     <li>LOD bias</li>
     <li>Comparison operator (for shadow samplers)</li>
     <li>Wrap mode</li>
-    <li>Seamless cubemap filtering</li>
+    <li>Border color</li>
   </ul>
-  Samplers can be bound to texture units, and override the texture's built-in sampler when done so.
+  Note that seamless cubemap filtering is not on this list. If you want seamless filtering, you must enable it with the respective glTextureParameter call.
 </p>
 <p>
-  Unless you have a very weird renderer, your draws will benefit from sampler reuse. Despite this, it's a common idiom in OpenGL to create a texture and immediately set some common sampler state like in the following:
+  Samplers can be bound to texture units, and override the texture's built-in sampler when done so.
+</p>
+<pre><code>glBindTextureUnit(index, textureID);
+glBindSampler(index, samplerID);</code></pre>
+<p>
+  Unless you have a very weird renderer, your code will benefit from textures being sampler-agnostic. Despite this, it's a common idiom in OpenGL to create a texture and immediately set some common sampler state like in the following:
 <pre><code class="language-cpp">GLuint myTex;
 glGenTextures(1, &myTex);
 glBindTexture(GL_TEXTURE_2D, myTex);
@@ -352,6 +358,10 @@ DrawElements(...);   // error! we are outside a render pass</code></pre>
 <h2 id="more">More Info</h2>
 <p>
   <a class="link" href="https://www.khronos.org/opengl/wiki/History_of_OpenGL">The history of OpenGL</a> is great for browsing and discovering new features.
+</p>
+<h2 id="addendum">Addendum</h2>
+<p>
+  In the time since this post was written, I have implemented this vision in my new library <a class="link" href="https://github.com/JuanDiegoMontoya/Fwog">Fwog</a>. There are several examples which you can peruse (at your leisure) to see code that follows these guidelines closely.
 </p>
   </body>
 </html>
