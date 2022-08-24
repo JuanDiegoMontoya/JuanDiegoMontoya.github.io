@@ -95,16 +95,16 @@ glTextureSubImage2D(myTex, 0, 0, 0, width, height, GL_UNSIGNED_BYTE, GL_RGBA, pi
 </p>
 <h3 id="texture views">Texture Views</h3>
 <p>
-  Texture objects in OpenGL have overloaded functionality. To have the equivalent in an explicit API, we would need three objects: texture memory, a texture view, and a sampler. Sometimes it can be convenient to have all this bundled into one object, but usually it increases code complexity.
-</p>
-<p>
-  Available from OpenGL 4.3, a texture view is essentially a reference to some other texture memory. A few things texture views can achieve are:
+  Available from OpenGL 4.3, texture views basically allow us to reinterpret the memory of another texture in some way. A few things texture views can achieve are:
   <ul>
     <li>Treating a single face of a cubemap as a 2D texture</li>
     <li>Treating a single slice of an array texture as its own (non-array) texture</li>
     <li>Treating a single mip of a texture as its own texture</li>
     <li>Treating a texture as another texture with a different (same size) internal format</li>
   </ul>
+  This can be particularly useful for cases where we are finely manipulating textures, like in a bloom downsampling pass, where we may want to treat individual mip levels of a texture as unique 2D textures.
+</p>
+<p>
   It should be noted that views of textures can only be made if the texture's memory is immutable (see the previous subsection). Here is an example of making a 2D view of the 50th slice of a 2D array texture:
   <pre><code class="language-cpp">GLuint myTex;
 glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &myTex);
@@ -120,7 +120,7 @@ glTextureView(myTexView, GL_TEXTURE_2D, myTex, GL_R32F, 0, 1, 49, 1);</code></pr
 </p>
 <h3 id="sampler objects">Sampler Objects</h3>
 <p>
-  Introduced in OpenGL 3.3, sampler objects aren't a very new feature. However, I rarely see them being used despite the advantages they bring.
+  Introduced in OpenGL 3.3, sampler objects aren't a very new feature. However, tutorials rarely seem to use them despite the advantages they bring.
 </p>
 <p>
   Sampler objects are used to describe a sampler state, as one might suspect by the name. This includes the following state:
@@ -132,8 +132,9 @@ glTextureView(myTexView, GL_TEXTURE_2D, myTex, GL_R32F, 0, 1, 49, 1);</code></pr
     <li>Comparison operator (for shadow samplers)</li>
     <li>Wrap mode</li>
     <li>Border color</li>
+    <li>Seamless cubemap filtering mode</li>
   </ul>
-  Note that seamless cubemap filtering is not on this list. If you want seamless filtering, you must enable it with the respective glTextureParameter call.
+  Note that while seamless cubemap filtering is on this list, it can also be globally forced with <code>glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);</code>.
 </p>
 <p>
   Samplers can be bound to texture units, and override the texture's built-in sampler when done so.
@@ -154,10 +155,10 @@ glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);</code></pre>
   This is an issue because it conflates a texture with how it will be used. If we want to sample the same texture with two different samplers in the same frame, we must remember to set all the affected state in each place. With sampler objects, you just create one for each pass and bind it before drawing- no runtime sampler state changes required!
 </p>
 <p>
-  The other issue is that having a sampler state for each texture leads to code duplication and inflexibility. If we want to change a sampler parameter (such as anisotropic filtering) for objects rendered in a specific pass, each affected texture must be modified. With sampler objects, all you have to do is modify the respective ones used in the pass.
+  The other issue is that having a sampler state for each texture leads to code duplication and inflexibility. If we want to change a sampler parameter (such as anisotropic filtering) for objects rendered in a specific pass, each affected texture must be modified. With sampler objects, all you have to do is modify the respective ones used in the pass. If you want multiple passes with unique sampler parameters (which you may very well want in your engine), then you have to set the sampler state for every texture used in the pass prior to drawing.
 </p>
 <p>
-  As such, sampler objects allow us to write <a class="link" href="https://en.wikipedia.org/wiki/Pure_function">purer</a> code (and thus fewer bugs):
+  Sampler objects allow us to write simpler, more readable, and <a class="link" href="https://en.wikipedia.org/wiki/Pure_function">more pure</a> code (and thus fewer bugs):
 </p>
 <pre><code class="language-cpp">GLuint samplerFoo;
 GLuint samplerBar;
@@ -197,7 +198,7 @@ void RenderBar()
   This enforces the use of samplers and makes it more difficult to accidentally bind a texture without a sampler (or vice versa).
 </p>
 <p>
-  Note that samplers are also very cheap to create and destroy (on the Nvidia and AMD drivers I tested).
+  Note that samplers are also very cheap to create and destroy (at least they were on the Nvidia and AMD drivers I tested. If you're unsure, you can always create a hash map to cache samplers since you won't need more than a few).
 </p>
 <h2 id="input">Smarter Input Assembly</h2>
 <p>
@@ -216,7 +217,7 @@ void RenderBar()
 </p>
 <h2 id="compute">Compute Shaders for Postprocessing</h2>
 <p>
-  Typically, full screen passes and other passes that operate on pixels of a texture are implemented by rasterizing a full screen quad or triangle, then doing the algorithmic work inside of a fragment shader. Before such passes, you need to make sure the OpenGL state can faciliate this: set the depth test to <code>GL_ALWAYS</code>, disable depth writes, bind a VAO and a shader that is set up with a simple vertex shader and the fragment shader you care about, bind a framebuffer with the target texture, and the viewport is set. That isn't even all the state that can cause your simple quad to not appear correctly. What could go wrong?
+  Typically, full screen passes and other passes that operate on pixels of a texture are implemented by rasterizing a full screen quad or triangle, then doing the algorithmic work inside of a fragment shader. Before such passes, you need to make sure the OpenGL state can faciliate this: set the depth test to <code>GL_ALWAYS</code>, disable depth writes, bind a VAO and a shader that is set up with a simple vertex shader and the fragment shader you care about, bind a framebuffer with the target texture, and the viewport is set. That isn't even all the state that can cause your simple quad to not appear correctly!
 </p>
 <p>
   Beginning in OpenGL 4.3, compute shaders (due to their general-purpose nature) allow us to cleanly express "do some operation on each pixel of a texture", which is frequent in post processing pipelines. On the host (CPU) side, we just need to do the following unique steps before dispatching (executing) the shader:
@@ -244,7 +245,9 @@ void RenderBar()
   const int numGroupsY = (texHeight + local_size - 1) / local_size;
   glDispatchCompute(numGroupsX, numGroupsY, 1);
 
-  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+  // issue overkill barrier to ensure all writes from this dispatch are visible to every potential consumer
+  // ideally you would use as few barrier bits as possible and put it closer to where the data is actually consumed
+  glMemoryBarrier(GL_ALL_BARRIER_BITS);
 }</code></pre>
   On the GPU side, there are a few more things we need to do given that we can't use automatic interpolation to assign each pixel a UV.
 <pre><code class="language-glsl">#version 440 core
@@ -273,10 +276,13 @@ void main()
 
   imageStore(i_target, gid, finalColor);
 }</code></pre>
-  There are other advantages to using compute shaders (such as shared memory and thread swizzling) that I won't get into here. The Khronos OpenGL wiki has a <a class="link" href="https://www.khronos.org/opengl/wiki/Compute_Shader">nice reference</a> for using compute shaders in OpenGL. For GPGPU techniques and info on GPU hardware, there exists plenty of online resources. I would recommend taking a look at the <a class="link" href="https://gpuopen.com/learn/">Learn section of GPUopen</a> for starters.
+  There are other advantages to using compute shaders (such as shared memory and thread swizzling) that I won't get into here. The Khronos OpenGL wiki has a <a class="link" href="https://www.khronos.org/opengl/wiki/Compute_Shader">nice reference</a> for using compute shaders in OpenGL. For GPGPU techniques and info on GPU hardware, there exists plenty of online resources. I would recommend taking a look at the <a class="link" href="https://gpuopen.com/learn/">Learn section of GPUopen</a> for starters. A great crash-course in compute shaders and low-level information is available <a class="link" href="https://youtu.be/eDLilzy2mq0">here on YouTube</a>.
 </p>
 <p>
   One disadvantage of using compute shaders is that we can no longer reliably use non-Lod, non-Grad texture sampling functions. Why? According to the GLSL spec, implicit derivatives are undefined in non-fragment stages. In other words, it's extremely easy to invoke undefined behavior when using a function as basic as <code>texture</code> in a compute shader. For this reason, all texture fetches should be ones with "Lod" or "Grad" in the name (<code>textureLod</code> should cover most of your bases). <code>texelFetch</code> and <code>imageLoad</code> are unaffected as they retrieve texels without filtering.
+</p>
+<p>
+  Something you may have noticed in the compute shader example is a notion of "work groups" and "local size" or "work group size". These concepts relate to how work is batched in a compute dispatch. I won't get into them here as they are explained better in the links above, but it's important to understand these values and good values for them in different scenarios.
 </p>
 <h2 id="debugging">Debugging</h2>
 <h3 id="callback">OpenGL Debug Callback</h3>
