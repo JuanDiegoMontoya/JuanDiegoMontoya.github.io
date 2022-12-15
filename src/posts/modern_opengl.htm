@@ -180,14 +180,14 @@ void RenderFoo()
 {
   glBindSampler(0, samplerFoo);
   glBindTextureUnit(0, myTex);
-  // draw some stuff
+  // Draw some stuff
 }
 
 void RenderBar()
 {
   glBindSampler(0, samplerBar);
   glBindTextureUnit(0, myTex);
-  // draw some other stuff
+  // Draw some other stuff
 }</code></pre>
   The only potential for error is in forgetting to unbind a sampler when using both discrete samplers objects and built-in texture samplers. Therefore, when introducing sampler objects, I would suggest replacing all instances of <code>glBindTextureUnit</code> (and <code>glActiveTexture</code> + <code>glBindTexture</code>) with something similar to the following:
 <pre><code class="language-cpp">void BindTextureSampler(GLuint unit, GLuint texture, GLuint sampler)
@@ -225,58 +225,58 @@ void RenderBar()
     <li>Calculate the number of work groups we want to dispatch</li>
     <li>Issue a memory barrier after the dispatch to make writes visible to future passes</li>
   </ul>
-  Compared to setting graphics pipeline state, this is nothing. Everything else (binding the shader, specifying shader input and output) proceeds as usual. We can now write a function that is more or less isolated from global state:
+  Everything else (binding the program, specifying input and output) proceeds as usual. We can now write a function that is more or less isolated from global state:
 <pre><code class="language-cpp">void ApplyEffect(GLuint sourceTexture, GLuint targetTexture, GLuint sourceSampler, 
                  GLuint computeProgram, int texWidth, int texHeight)
 {
   glUseProgram(computeProgram);
   
-  // shader input
+  // Shader input
   glProgramUniform2i(computeProgram, texWidth, texHeight);
   glBindSampler(0, sourceSampler);
   glBindTextureUnit(0, sourceTexture);
 
-  // shader output
+  // Shader output
   glBindImageTextures(0, 1, &targetTexture); // this function is in OpenGL 4.4, use glBindImageTexture in older versions
 
-  // hard-coded local_size, could be reflected from the shader at load time
+  // Hard-coded local_size, could be reflected from the shader at load time
   const int local_size = 16;
   const int numGroupsX = (texWidth + local_size - 1) / local_size;
   const int numGroupsY = (texHeight + local_size - 1) / local_size;
   glDispatchCompute(numGroupsX, numGroupsY, 1);
 
-  // issue overkill barrier to ensure all writes from this dispatch are visible to every potential consumer
-  // ideally you would use as few barrier bits as possible and put it closer to where the data is actually consumed
+  // Issue overkill barrier to ensure all writes from this dispatch are visible to every potential consumer
+  // Ideally, you would use as few barrier bits as possible and put it closer to where the data is actually consumed
   glMemoryBarrier(GL_ALL_BARRIER_BITS);
 }</code></pre>
-  On the GPU side, there are a few more things we need to do given that we can't use automatic interpolation to assign each pixel a UV.
+  On the GPU side, there are a few more things we need to do given that we can't use automatic interpolation to assign each pixel a UV. Pay close attention to the comments.
 <pre><code class="language-glsl">#version 440 core
 
-// input
+// Input
 layout(binding = 0) uniform sampler2D s_source;
 uniform ivec2 u_texDim;
 
-// output
+// Output
 layout(binding = 0) uniform writeonly image2D i_target;
 
 layout(local_size_x = 16, local_size_y = 16) in; // hardcoded-but-sane work group size
 void main()
 {
-  // get global ID and return if out of bounds (we can only dispatch threads at work group granularity)
+  // Get global ID and return if out of bounds (we can only dispatch threads at work group granularity)
   ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
   if (any(greaterThanEqual(gid, u_texDim)))
     return;
 
-  // calculate the UV of the center of a pixel using this thread's global ID
+  // Calculate the UV of the center of a pixel using this thread's global ID
   vec2 uv = (vec2(gid) + 0.5) / u_texDim;
 
-  // the "meat" of the shader (where the effect is implemented)
+  // The "meat" of the shader (where the effect is implemented)
   vec4 mySample = textureLod(s_source, uv, 0);
   vec4 finalColor = // do some operation on mySample
 
   imageStore(i_target, gid, finalColor);
 }</code></pre>
-  There are other advantages to using compute shaders (such as shared memory and thread swizzling) that I won't get into here. The Khronos OpenGL wiki has a <a class="link" href="https://www.khronos.org/opengl/wiki/Compute_Shader">nice reference</a> for using compute shaders in OpenGL. For GPGPU techniques and info on GPU hardware, there exists plenty of online resources. I would recommend taking a look at the <a class="link" href="https://gpuopen.com/learn/">Learn section of GPUopen</a> for starters. A great crash-course in compute shaders and low-level information is available <a class="link" href="https://youtu.be/eDLilzy2mq0">here on YouTube</a>.
+  Compute shaders offer the ability to perform lower-level optimizations, but describing them would be a series of its own. The Khronos OpenGL wiki has a <a class="link" href="https://www.khronos.org/opengl/wiki/Compute_Shader">nice reference</a> for using compute shaders in OpenGL. For GPGPU techniques and info on GPU hardware, there exists plenty of online resources. I would recommend taking a look at the <a class="link" href="https://gpuopen.com/learn/">Learn section of GPUopen</a> for starters. A great crash-course in compute shaders and low-level information is available <a class="link" href="https://youtu.be/eDLilzy2mq0">here on YouTube</a>.
 </p>
 <p>
   One disadvantage of using compute shaders is that we can no longer reliably use non-Lod, non-Grad texture sampling functions. Why? According to the GLSL spec, implicit derivatives are undefined in non-fragment stages. In other words, it's extremely easy to invoke undefined behavior when using a function as basic as <code>texture</code> in a compute shader. For this reason, all texture fetches should be ones with "Lod" or "Grad" in the name (<code>textureLod</code> should cover most of your bases). <code>texelFetch</code> and <code>imageLoad</code> are unaffected as they retrieve texels without filtering.
@@ -334,18 +334,19 @@ void RenderMesh(Texture tex, Buffer buf) { ... }</code></pre>
 </p>
 <p>
   I drafted how it may look to use an API that implements this paradigm:
-<pre><code class="language-cpp">// describes state such as viewport, scissor, blending, framebuffer, etc.
-GraphicsPipelineInfo myPipelineInfo = GetMyPipelineInfo();
+<pre><code class="language-cpp">// Encapsulates the whole graphics pipeline- vertex input state, shaders, blend state, and more
+GraphicsPipeline graphicsPipeline = ...;
 
-BeginRenderPass(myPipelineInfo);
-  BindShaderProgram(...);
-  BindVertexFormat(...);
+// Describes render targets and the viewport(s)
+RenderPassInfo renderPass = ...;
+BeginRenderPass(renderPass);
+  BindGraphicsPipeline(graphicsPipeline);
   BindVertexBuffer(...);
-  DrawElements(...); // okay, we are inside a render pass
+  DrawElements(...); // Okay, we are inside a render pass and a pipeline has been bound
 EndRenderPass();
 
-DrawElements(...);   // error! we are outside a render pass</code></pre>
-  When done properly, this will make it much harder to leak state at the expense of increased verbosity. This method will also create a lot of redundant state-setting, so it may be necessary to implement your own global state tracker for optimality. Any further description is outside the scope of this guide, so I'll leave it as an exercise for the reader :)
+DrawElements(...);   // Assert! We are outside a render pass</code></pre>
+  If the wrapper is correctly constructed, it should be impossible to leak state. It will also become much easier and more efficient to deduplicate state as it can only be set in a few places (calls to BeginRenderPass and Bind*Pipeline).
 </p>
 <h2 id="more">More Info</h2>
 <p>
