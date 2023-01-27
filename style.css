@@ -167,3 +167,12 @@ a:hover {
   left: 0;
   z-index: 1;
 }
+
+.flexy {
+  display: flex;
+  align-items: flex-end;
+}
+
+.flexy-sub {
+  flex: 1;
+}
