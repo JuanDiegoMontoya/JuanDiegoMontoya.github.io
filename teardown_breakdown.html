@@ -295,7 +295,7 @@
 </p>
 <img src="assets/teardown/soft_shadow.jpg">
 <p>
-  Teardown features exclusively area lights, which is made possible thanks to ray tracing.
+  Teardown features exclusively area lights, which is made possible thanks to ray tracing. Area lights are difficult to support with rasterization or <a class="link" href="https://hard-drive.net/hd/explained-the-differences-between-ray-tracing-and-a-big-old-rock-on-the-ground/">rock</a>, so they typically rely on unrealistic punctual lights.
   <ul>
     <li>Sphere. These are typically for fire and uncovered street lights.<img src="assets/teardown/sphere_light.jpg"></li>
     <li>Cone (sphere with point and cone attenuation, AKA spot light). These can be found in covered street lights, vehicle headlights, and the player's flashlight.<img src="assets/teardown/cone_light.jpg"></li>
@@ -429,12 +429,13 @@
 <img src="assets/teardown/dog-slap.gif" style="max-height:512px; max-width:512px">
 <h2>G-Buffer</h2>
 <p>
-  Every graphics programmer has indulged in excessive G-buffer optimization at least once in their lives.
+  Every graphics programmer has indulged in excessive G-buffer optimization at least once in their lives. These are my thoughts on how the G-buffer could be laid out more compactly.
   <ul>
     <li>Albedo: RGB16_UNORM consumes excessive bandwidth, especially considering that the input itself is RGB8_UNORM. I understand that a larger format is desired to minimize the precision loss from the sRGB-to-linear conversion that takes place when sampling the material albedo. I propose moving that conversion to where the albedo is consumed for lighting, then reducing this buffer to RGBA8_UNORM.</li>
-    <li>Normal: RGB8_SNORM is a fine format to use (though <a class="link" href="https://jcgt.org/published/0003/02/01/">more precise encodings exist</a>), but it's important to know that OpenGL drivers will secretly promote this to one of the 32-bit formats. Changing this to RGBA8_SNORM will open up room for other data to be stored in this texture.</li>
-    <li>Motion + water mask: RGB16_FLOAT. Spending 16 bits to store a boolean value is an interesting choice.</li>
-    <li>Material: RGBA16_FLOAT. Emission needs to be a floating-point value, but a half-precision float seems excessive for reflectivity, inverse roughness, and metallic. I would make this R16_FLOAT and redistribute the others.</li>
+    <li>Normal: RGB8_SNORM is a fine format to use (though <a class="link" href="https://jcgt.org/published/0003/02/01/">more precise encodings exist</a>), but it's important to know that OpenGL drivers will secretly promote this to one of the 32-bit formats. Changing this to RGBA8_SNORM will open up room for other data to be stored in this texture without increasing bandwidth or memory consumption.</li>
+    <li>Motion + water mask: RGB16_FLOAT. Since the water flag is a boolean value, it could be allocated elsewhere to save some bandwidth. Another value could be quantized to make room for this bit, but I'll leave determining that value as an exercise for the reader.</li>
+    <li>Material: RGBA16_FLOAT. Emission understandably needs to be a floating-point value, but a half-precision float seems excessive for reflectivity, inverse roughness, and metallic. I would make this R16_FLOAT and redistribute the others.</li>
+    <li>Linear depth: As I will note, this buffer could be entirely removed if a different early-z scheme is used.</li>
   </ul>
 </p>
 <h2>Custom Early-Z</h2>
