@@ -1,25 +1,23 @@
-<title>Teardown Frame Breakdown</title>
+<title>Teardown Teardown</title>
 <h1>Teardown Teardown</h1>
-<sub>Yes, everyone thought of that.</sub>
-<h3>January 2022</h3>
-<h2>Introduction</h2>
+<sub>
+  Yes, everyone thought of that.
+  <br>
+  By the way, take a read of <a class="link" href="https://acko.net/blog/teardown-frame-teardown/">this breakdown</a>, which offers another perspective of Teardown's renderer.
+</sub>
+
+<h3>Februrary 2022</h3>
 <p>
-  Hey y'all, today I'll be bringing you a breakdown of a frame of <i>Teardown</i>.
-</p>
-<img src="assets/teardown/slowpoke.jpg" style="max-height:256px; max-width:256px">
-<p>
-  <a class="link" href="https://acko.net/blog/teardown-frame-teardown/">Whoops</a>. It looks like someone else posted their "Teardown teardown" rendition mere days before mine (but I suppose great minds think alike). You better check it out, as it's a great read that offers a different perspective, shows some effects that I didn't cover, and even revealed to me some mistakes I made in this.
+  Teardown is a physics-based voxel game. The object is to plan a heist by crafting the optimal route using various tools of destruction offered to the player. There is also a sandbox mode in which the player can wreak havoc to their heart's content or until their computer starts lagging unbearably, whichever comes first.
 </p>
 <p>
   Of course, if you haven't already, go buy the game and check it out for yourself! Note that some of the images and videos in this post are slightly modified to increase readability (e.g., dark textures were brightened). I can't remember all the ones I changed, so just take this whole thing with a grain of pink Himalayan salt. Without further ado, let's get on with this.
 </p>
 <p>
-  Teardown is a physics-based voxel game. The object is to plan a heist by crafting the optimal route using various tools of destruction offered to the player. There is also a sandbox mode in which the player can wreak havoc to their heart's content or until their computer starts lagging unbearably, whichever comes first.
-</p>
-<p>
   Here is the main frame whose composition we will be examining, though we will briefly look at other frames that contain effects not seen here.
 </p>
 <img src="assets/teardown/final_image.png">
+
 <h2>Configuration</h2>
 <p>
   The frame was captured at maximum graphical settings, minus image effects. The game is running at 2560x1440 (also known as 2K or QHD).
@@ -30,17 +28,20 @@
 <p>
   As you can see, there aren't many options to choose from.
 </p>
+
 <h2>High-Level View</h2>
 <p>
   Teardown is a physically-inspired deferred renderer that uses voxel ray tracing for certain secondary effects. The renderer is built on OpenGL 3.3, meaning it does not (and cannot) use certain "modern" API features like hardware-accelerated ray tracing (present in Turing+ and Navi 2x+ GPUs) or compute shaders. Almost all effects are rendered in fragment shaders.
 </p>
 <p>
-  Fun fact: Teardown does not feature global illumination, but it does have some features that require off-screen visibility.
+  Fun fact: Teardown does not feature global illumination, but it does have some features that require off-screen visibility as we'll see.
 </p>
+
 <h2>Pre-Rendering Tasks</h2>
 <p>
-  A frame begins by resetting most of OpenGL's pipeline state.
+  A frame begins by resetting most of OpenGL's pipeline state. This is common in OpenGL renderers to ensure the frame is starting with a clean slate and prevent leakage from the previous frame.
 </p>
+
 <h2>Base/G-Buffer Pass</h2>
 <p>
   Like many deferred renderers, Teardown's first big workload is generating the G-buffer (geometry buffer). The G-buffer consists of the following textures:
@@ -50,12 +51,12 @@
     <li>Material: RGBA16_FLOAT
       <ul style="margin: auto 0;">
         <li>R: reflectivity in [0, 1]</li>
-        <li>G: 1-roughness in [0, 1]</li>
+        <li>G: smoothness in [0, 1] (equivalent to 1-roughness)</li>
         <li>B: metallic in [0, 1]</li>
         <li>A: emissive in [0, 32]</li>
       </ul>
     </li>
-    <li>Motion + water mask: RGB16_FLOAT. RG are used for temporal anti-aliasing. B is used for a binary water mask.</li>
+    <li>Motion + reactive mask: RGB16_FLOAT. Used for temporal reprojection and anti-aliasing. The reactive mask is somewhat analogous to <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#reactive-mask">the one in FSR 2</a>, which is why I called it such</li>
     <li>Linear depth: R16_UNORM (used for a later-described optimization)</li>
     <li>Hyperbolic depth: D32_UNORM</li>
   </ul>
@@ -79,6 +80,7 @@
   <div><img src="assets/teardown/action_final_image.jpg"></div>
   <div><img src="assets/teardown/action_g_motion.png"></div>
 </div>
+
 <h3>Generating the G-Buffer</h3>
 <p>
   Here is a short video showing every draw call issued during the pass. The darker frames interspersed are linear depth texture blits. Note that this is only viewing the albedo buffer:
@@ -142,30 +144,90 @@
 </div>
 <h3>Cables</h3>
 <p>
-  Cables and ropes in Teardown are drawn not as tiny voxels or SDFs, but as good ol' billboarded triangle lists.
+  Cables and ropes in Teardown are drawn not as tiny voxels or SDFs, but as good ol' billboarded triangle lists. These are drawn after all the solid geometry.
 </p>
 <img src="assets/teardown/cables_1.png">
 <img src="assets/teardown/cables_2.png">
 <h3>Smoke</h3>
 <p>
-  big smoke WIP
+  After cables, smoke and other particle effects are rendered. Some of them sample from a texture atlas:
 </p>
+<img src="assets/teardown/sprite_atlas.png" style="max-height:256px; max-width:256px">
+<p>
+  Teardown renders smoke and other billowy particle effects (like the fire extinguisher foam) in a clever way. Each particle is drawn as four triangles arranged as a hollow square pyramid facing the viewer. The vertex normal is then interpolated across the face of the triangles, which, after shading, will give the appearance of being hemispherical. All for the price of just four triangles! These images should make it a bit clearer:
+</p>
+<div class=flexy>
+  <div><img src="assets/teardown/smoke_geometry.png"></div>
+  <div><img src="assets/teardown/smoke_normal.png"></div>
+</div>
+<sub>
+  Left: the raw mesh. Right: the smooth normals (stochastic effects disabled).
+</sub>
+<p>
+  If we zoom in closely on the normals, we can see that every other pixel's normal is reflected over the camera vector. This causes those pixels to be shaded as though they were on the other side of the virtual sphere, making particles appear to have volume (and not look like they're tracking the camera as sprites often do in games).
+</p>
+<img src="assets/teardown/smoke_normal_2.png">
+<sub>
+  It looks like abstract art when it's this zoomed-in.
+</sub>
+<p>
+  At this point, we still haven't addressed the issue of transparency. One problem is that the G-buffer can only represent one surface per pixel, when there can be several overlapping transparent smoke particles that overlap. The solution that Teardown uses is to render opaquely as normal, but randomly discard pixels by comparing their alpha with a sample from a blue noise texture. This produces a noisy image, which is later resolved with TAA.
+</p>
+<div class=flexy>
+  <div><img src="assets/teardown/smoke_unresolved.png"></div>
+  <div><img src="assets/teardown/smoke_resolved.png"></div>
+</div>
+<p>
+  These techniques, together, produce the final result:
+</p>
+<img src="assets/teardown/smoke_final.png">
+
 <h3>Rain and Snow</h3>
 <p>
-  particles WIP
+  Rain and snow are rendered as a cluster of a few thousand billboards in front of the camera, whose orientations are computed on the CPU. Similar to smoke, the fragment shader for rain and snow uses a dithered approach to transparency.
 </p>
-<h3>Sprites</h3>
+<div class=flexy>
+  <div><img src="assets/teardown/rain_albedo.png"></div>
+  <div><img src="assets/teardown/rain_shaded.png"></div>
+</div>
 <p>
-  Fire and light glare thingies WIP
+  Snow is rendered much in the same way as rain, except without an impact effect when it hits the ground.
 </p>
+<div class=flexy>
+  <div><img src="assets/teardown/snow_albedo.png"></div>
+  <div><img src="assets/teardown/snow_shaded.png"></div>
+</div>
+<p>
+  The splash effect for rain is created by placing perpendicular quads on the ground. Here is an example of the quads that are rendered for rain. A very similar-looking arrangement is drawn for snow, minus the tiny quads on the ground representing splashes.
+</p>
+<img src="assets/teardown/rain_billboards.png">
 <h3>Water</h3>
 <p>
-  here comes the plane WIP
+  Water is drawn, perhaps unsurprisingly, as a series of quads (one for each plane) at the very end of the G-buffer pass. A static foam effect is drawn on top of the entire body of water. Then, up to 64 smaller, distorted foam "splashes" that appear in the wake of boats or when an entity intersects with the water.
 </p>
+<img src="assets/teardown/water_albedo.png">
+<p>
+  A single foam texture is used for these effects.
+</p>
+<img src="assets/teardown/foam.png" style="max-height:256px; max-width:256px">
+<p>
+  As far as I can tell, water is the only effect that sets the reactive mask (B component of the motion buffer). This is likely due to the fact that water is an animated surface, which cannot be naïvely reprojected without smearing artifacts. The reactive mask will be used to aggressively clamp the color of reprojected color samples in the TAA pass.
+</p>
+<img src="assets/teardown/water_material.png">
+<p>
+  The small waves and ripples are made by offsetting the normal, as usual.
+</p>
+<img src="assets/teardown/water_normal.png">
+<p>
+  With complete shading and denoising, the water looks as such:
+</p>
+<img src="assets/teardown/water_shaded.png">
+
 <h2>Computing the Focal Plane</h2>
 <p>
   The new focal plane is computed by sampling the linear depth buffer in a spiral around the center of the screen using <a class="link" href="http://extremelearning.com.au/going-beyond-golden-ratio/">the golden ratio</a>. <a class="link" href="https://www.shadertoy.com/view/mdlXz4">Here</a> is a simple shader that shows the pattern used. The new focal plane is then blended with the old focal plane (20% of the new focal plane is used) to create a smooth transition over several frames. The updated focal plane is written to a 1x1 RG16_FLOAT texture and is later used for depth of field (which is disabled in this frame).
 </p>
+
 <h2>Blurring the Normals</h2>
 <p>
   The normals of nearby pixels are blurred in a full-screen pass using the same sampling technique as previously described. This gives the illusion of objects being beveled after they are shaded.
@@ -173,6 +235,7 @@
 <img src="assets/teardown/gNormalPreBlur.png">
 <img src="assets/teardown/gNormalPostBlur.png">
 <img src="assets/teardown/shadedPostBlur.png">
+
 <h2>Lighting Pass</h2>
 <p>
   In this pass, proxy geometries for the lights are drawn and pixels receive direct illumination, much like a classical deferred renderer. What Teardown does differently is, again, in the fragment shader as we'll explore.
@@ -189,6 +252,7 @@
     <li>Local lighting: light originating from sources within the scene (lamps, monitors, fire, etc.)</li>
   </ol>
 </p>
+
 <h3>World Volume</h3>
 <p>
   The world volume is a 1252x128x1252 texture, which represents the opaque voxels in the level. This texture is used for all ray tracing that occurs after generating the G-buffer, so it's important to understand how it works. Here are the first few hundred layers:
@@ -211,6 +275,7 @@
 <video controls class="center">
   <source src="assets/teardown/voxelization_artifact.mp4" type="video/mp4">
 </video>
+
 <h3>Ambient Lighting</h3>
 <p>
   Ambient lighting is computed by casting two rays per pixel in cosine-weighted random directions on the unit hemisphere. The starting position of every ray is also jittered in all dimensions to, according to one comment, "hide voxel artefacts", though I couldn't see much of a difference in this scene when removing it.
@@ -233,6 +298,7 @@
 <p>
   Another thing to note is that while I call this pass "ambient lighting", it's basically computing ambient occlusion. "Lighting" comes from the fact that the shader computes the full ambient lighting and stores it in a texture to be later composited, rather than storing ambient visibility (a scalar) and computing the ambient contribution later.
 </p>
+
 <h4>Super Sparse Voxel Tracing</h4>
 <p>
   Teardown uses three different global ray tracing functions for different purposes, simply named <code>raycastShadowVolume</code>, <code>raycastShadowVolumeSparse</code>, and <code>raycastShadowVolumeSuperSparse</code> (I question the use of the term "shadow" here, but I digress). The ambient lighting pass uses the "SuperSparse" variant, as a high level of precision is not needed for this effect.
@@ -247,6 +313,7 @@
   </ol>
   This algorithm has the advantage of taking a small number of steps in the worst case (unlike sparse or dense DDA of the same distance) and only samples the least cache-friendly level up to eight times (approximately).
 </p>
+
 <h3>Sun Lighting</h3>
 <p>
   After ambient lighting, the lighting from the sun is added. To do this, a ray from each pixel is shot in the direction of the sun. Like in the ambient lighting pass, the position of each ray is jittered, giving a constant-width penumbra on shadows.
@@ -262,10 +329,12 @@
   <div><img src="assets/teardown/shadows_noharden.jpg"></div>
   <div><img src="assets/teardown/shadows_harden.jpg"></div>
 </div>
+
 <h4>Sparse Voxel Tracing</h4>
 <p>
   The sun lighting pass uses the sparse ray casting method. This method differs from the super sparse tracing method in that it dynamically switches between LOD levels based on the 'sparseness' of the voxel grid. In short, hits will reduce the mip level for the next step of the trace, while misses will increase it.
 </p>
+
 <h3>Local Lights</h3>
 <p>
   In classic deferred renderer style, lights are rendered with proxy geometry with front-face culling and depth test disabled. Then, all pixels covered by the proxy geometry calculate the contribution from that light. A spherical or hemispherical proxy volume is chosen based on the type of light, as we will later see.
@@ -318,6 +387,7 @@
   <div><img src="assets/teardown/modulate_before.jpg"></div>
   <div><img src="assets/teardown/modulate_after.png"></div>
 </div>
+
 <h2>Volumetric Lighting</h2>
 <p>
   Volumetric lighting is rendered by first drawing the light proxy volumes (again). Then, a ray is marched from the camera to the far plane. At each step in the ray, another ray is launched from that point toward a random point on the light source to check for visibility. If the light is visible, then a small amount of color is accumulated in the volumetric lighting texture.
@@ -345,6 +415,7 @@
   <div><img src="assets/teardown/volumetricdenoise_before.png"></div>
   <div><img src="assets/teardown/volumetricdenoise_after.png"></div>
 </div>
+
 <h2>Specular Reflections</h2>
 <p>
   For any reflective surface (whose G-buffer reflectivity is greater than zero), a world-space ray is cast in reflection direction, jittered by a small amount depending on the surface roughness. This jitter gives us blurry reflections for rough materials and sharp reflections for smooth ones. Rays will travel up to 32 units before terminating. If no voxels are hit during the ray's journey, then the path is considered unblocked. In this case, the color of the skybox will be used for the reflection. If the ray hits a voxel that is visible on the screen, its color will be used. This essentially allows for off-screen objects to occlude specular rays, while on-screen objects can have their lighting visible in reflections.
@@ -370,6 +441,7 @@
   <div><img src="assets/teardown/speculardenoise_before.png"></div>
   <div><img src="assets/teardown/speculardenoise_after.png"></div>
 </div>
+
 <h2>Composite</h2>
 <p>
   Now that diffuse, specular, and fog have been rendered and denoised, they can be composited into a single image.
@@ -381,6 +453,17 @@
   Finally, the illuminated fog and height-based fog are added to the surface color, and the skybox is rendered.
 </p>
 <img src="assets/teardown/applyspecular_after.png">
+<h3>Sprites</h3>
+<p>
+  At this point (after all opaque surfaces have been shaded), transparent sprites like glare from lamps and the sun are drawn. The in-game photo mode quite effectively reveals how these are drawn:
+</p>
+<video controls class="center">
+  <source src="assets/teardown/light_sprites.mp4" type="video/mp4">
+</video>
+<p>
+  As you can see, these are drawn as camera-aligned billboards which only appear when the center of the light source is visible. They are essentially placed on top of the rendered image, so they aren't subjected to depth testing.
+</p>
+
 <h2>Automatic Exposure</h2>
 <p>
   To automatically adjust the exposure of the virtual camera, Teardown first finds the average luminance of the image. This is done by rendering the luminance of the image to a 256x256 texture, then generating its mip chain to get a series of averaged luminances.
@@ -393,49 +476,80 @@
 <p>
   All this only calculates the <i>target</i> exposure. Because we don't want the image brightness to rapidly change (creating a flickering effect) while turning, the real exposure is a mix between the old exposure and the target exposure with an alpha of 0.05. This value is rendered to a 1x1 texture which will later be used to expose the image.
 </p>
+
 <h2>Temporal Anti-Aliasing</h2>
 <p>
-  Color clamping. WIP
+  TAA is Teardown's primary method of anti-aliasing. The implementation in Teardown samples the current frame in a plus pattern to compute a min and max color. The area around the reprojected "old" sample (last frame's output) is sampled to compute another min and max color in a similar manner. Then, the new and old values are compared for similarity to determine a value <code>t</code>. A low <code>t</code> means the old sample will be used, while a high <code>t</code> means the old sample clamped to the current frame's min and max color will be used. This color is then blended with the current frame's sample to produce the final color.
+</p>
+<p>
+  <code>t</code> is positively influenced by each pixel's velocity as well as the reactive mask. In essence, a higher <code>t</code> means the old sample cannot be trusted to be correct (hence the clamp), while a lower <code>t</code> indicates that the old sample is likely to be correct.
+</p>
+<p>
+  As is standard for TAA implementations, a subpixel jitter to the projection matrix is applied each frame to ensure many subpixel samples can be blended together.
 </p>
 <div class=flexy>
   <div><img src="assets/teardown/taa_before.png"></div>
   <div><img src="assets/teardown/taa_after.png"></div>
 </div>
+
 <h2>Bloom</h2>
 <p>
   Downscale and upscale :O WIP
 </p>
+
 <h2>UI</h2>
 <p>
-  Triangles. WIP
+  The crosshairs are drawn as quads with an image placed on top.
 </p>
+<img src="assets/teardown/ui_0.png" style="max-height:512px; max-width:512px">
+<p>
+  Characters of text are rendered individually with a signed distance field (SDF) font atlas. SDFs are useful for rendering anti-aliased text at various degrees of magnification.
+</p>
+<div class=flexy>
+  <div><img src="assets/teardown/sdf_font.png"></div>
+  <div><img src="assets/teardown/ui_1.png"></div>
+</div>
+<h2>Final Image</h2>
+<p>
+  Here is the final image once more. Hopefully this post has given you a deeper understanding of Teardown's renderer, and with it, a deeper appreciation for its graphics.
+</p>
+<img src="assets/teardown/final_image.png">
+
 <h1>The Bikeshed</h1>
 <sub>Nobody asked for this.</sub>
 <br>
 <img src="assets/teardown/dog-slap.gif" style="max-height:512px; max-width:512px">
+<p>
+  These are my thoughts on reasonable improvements to the renderer. Without having profiled the game (let alone with these changes implemented), don't be certain that any of these could lead to noticeable improvements. And, since I'm not the developer of Teardown, I am lacking a large amount of context which could nullify some of these ideas.
+</p>
 <h2>G-Buffer</h2>
 <p>
   Every graphics programmer has indulged in excessive G-buffer optimization at least once in their lives. These are my thoughts on how the G-buffer could be laid out more compactly.
   <ul>
     <li>Albedo: RGB16_UNORM consumes excessive bandwidth, especially considering that the input itself is RGB8_UNORM. I understand that a larger format is desired to minimize the precision loss from the sRGB-to-linear conversion that takes place when sampling the material albedo. I propose moving that conversion to where the albedo is consumed for lighting, then reducing this buffer to RGBA8_UNORM.</li>
     <li>Normal: RGB8_SNORM is a fine format to use (though <a class="link" href="https://jcgt.org/published/0003/02/01/">more precise encodings exist</a>), but it's important to know that OpenGL drivers will secretly promote this to one of the 32-bit formats. Changing this to RGBA8_SNORM will open up room for other data to be stored in this texture without increasing bandwidth or memory consumption.</li>
-    <li>Motion + water mask: RGB16_FLOAT. Since the water flag is a boolean value, it could be allocated elsewhere to save some bandwidth. Another value could be quantized to make room for this bit, but I'll leave determining that value as an exercise for the reader.</li>
-    <li>Material: RGBA16_FLOAT. Emission understandably needs to be a floating-point value, but a half-precision float seems excessive for reflectivity, inverse roughness, and metallic. I would make this R16_FLOAT and redistribute the others.</li>
+    <li>Motion + reactive mask: RGB16_FLOAT. The reactive mask could serve its duty elsewhere as an 8-bit unsigned normalized integer, leaving this buffer as RG16_FLOAT.</li>
+    <li>Material: RGBA16_FLOAT. Emission understandably needs to be a floating-point value, but a half-precision float seems excessive for reflectivity, inverse roughness, and metallic. I would make this render target R16_FLOAT (emission only) and redistribute the other values.</li>
     <li>Linear depth: As I will note, this buffer could be entirely removed if a different early-z scheme is used.</li>
   </ul>
 </p>
 <h2>Custom Early-Z</h2>
 <p>
-  The custom early-z mechanism used in Teardown is certainly interesting. While it is commonly asserted that rendering feedback loops (reading from the depth buffer, performing manual early-z test, and writing to the same buffer) are impossible, <a class="link" href="https://registry.khronos.org/OpenGL/extensions/ARB/ARB_texture_barrier.txt">they are patently not</a>. Thinking about the problem, I realized that Teardown spawns exactly one fragment shader invocation per fragment, per draw. That makes it a candidate to do the early-z test on the hyperbolic depth buffer and use <code>glTextureBarrier</code> between draws. While calling <code>glTextureBarrier</code> for every draw might increase GPU drain and fill time, gaining perfect early-z granularity and not having to blit a full-screen buffer several times per frame could offset that (profiling required!).
+  The custom early-z mechanism used in Teardown is quite clever, but . While it is commonly asserted that rendering feedback loops (reading from the depth buffer, performing manual early-z test, and writing to the same buffer) are impossible, <a class="link" href="https://registry.khronos.org/OpenGL/extensions/ARB/ARB_texture_barrier.txt">they are patently not</a>. Thinking about the problem, I realized that Teardown spawns exactly one fragment shader invocation per fragment, per draw. That makes it a candidate to do the early-z test on the hyperbolic depth buffer and use <code>glTextureBarrier</code> between draws. While calling <code>glTextureBarrier</code> for every draw might increase GPU drain and fill time, gaining perfect early-z granularity and not having to blit a full-screen buffer several times per frame could offset that (profiling required!).
 </p>
 <h2>Full-Screen Quads</h2>
 <p>
-  These are prevalent in games that want to do full-screen effects. It just makes sense to render two triangles that together cover the screen, and indeed Teardown does this over two dozen times.
+  These are prevalent in games that want to do full-screen effects. It just makes sense to render two triangles that together cover the screen, and indeed Teardown does this many times.
 </p>
 <p>
   As it turns out, there is an inefficiency in doing this! Along the shared edge of the triangles, unnecessary helper invocations are created, which <a class="link" href="https://gpuopen.com/unreal-engine-performance-guide/#casestudy">generate partially-filled waves</a>. The solution? Draw a humongous triangle that covers the screen. There will be no extra fragment shader invocations and no clipping, thanks to the <a class="link" href="https://en.wikipedia.org/wiki/Guard-band_clipping">guard band</a>. The performance benefit is admittedly small (and real), but implementing this is almost zero effort.
 </p>
 <h2>Conclusion</h2>
 <p>
-  This is getting ridiculously long (almost 4000 words), so stay tuned for part 2, where I analyze the performance of Teardown and add even more memes.
+  I was going to do a high-level performance analysis of Teardown to determine areas that can be improved and if my suggestions even have a chance of helping, but this post is already long enough. At some point I will* release a part 2 where I do this.
 </p>
+<h2>Thanks</h2>
+<p>
+  Special thanks to deccer, martty, pixelduck, clepirelli, void, geryu, DomeboyRichter, and everyone else on the Graphics Programming discord who gave feedback. I would also like to thank GPVM for enduring my <a class="link" href="https://youtu.be/jhPSDHlPDO0">live presentation of this</a> in early Janurary, when this post was still a WIP.
+</p>
+<sub>*may</sub>
