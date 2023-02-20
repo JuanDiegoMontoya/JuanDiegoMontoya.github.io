@@ -21,18 +21,63 @@
 </sub>
 
 <h3>Februrary 2022</h3>
+
+<h2>Table of Contents</h2>
+<ol>
+  <li><a class="link" href="#introduction">Introduction</a></li>
+  <li><a class="link" href="#configuration">Configuration</a></li>
+  <li><a class="link" href="#highlevel">High-Level View</a></li>
+  <li><a class="link" href="#prerender">Pre-Rendering Tasks</a></li>
+  <li><a class="link" href="#basepass">Base/G-Buffer Pass</a></li>
+  <ol>
+    <li><a class="link" href="#generating">Generating the G-Buffer</a></li>
+    <li><a class="link" href="#transparency">Transparency</a></li>
+    <li><a class="link" href="#cables">Cables</a></li>
+    <li><a class="link" href="#smoke">Smoke</a></li>
+    <li><a class="link" href="#rainsnow">Rain and Snow</a></li>
+    <li><a class="link" href="#water">Water</a></li>
+  </ol>
+  <li><a class="link" href="#focalplane">Computing the Focal Plane</a></li>
+  <li><a class="link" href="#blurnormals">Blurring the Normals</a></li>
+  <li><a class="link" href="#lightingpass">Lighting Pass</a></li>
+  <ol>
+    <li><a class="link" href="#worldvolume">World Volume</a></li>
+    <li><a class="link" href="#ambientlighting">Ambient Lighting</a></li>
+    <li><a class="link" href="#sunlighting">Sun Lighting</a></li>
+    <li><a class="link" href="#locallights">Local Lights</a></li>
+  </ol>
+  <li><a class="link" href="#irradiancedenoise">Spatiotemporal Irradiance Denoising</a></li>
+  <li><a class="link" href="#modulate">Modulate Albedo and Emissive</a></li>
+  <li><a class="link" href="#volumetriclighting">Volumetric Lighting</a></li>
+  <li><a class="link" href="#volumetricdenoising">Spatiotemporal Volumetric Denoising</a></li>
+  <li><a class="link" href="#specularreflections">Specular Reflections</a></li>
+  <li><a class="link" href="#speculardenoising">Temporal Specular Denoising</a></li>
+  <li><a class="link" href="#composite">Composite</a></li>
+  <li><a class="link" href="#sprites">Sprites</a></li>
+  <li><a class="link" href="#automaticexposure">Automatic Exposure</a></li>
+  <li><a class="link" href="#taa">Temporal Anti-Aliasing</a></li>
+  <li><a class="link" href="#bloom">Bloom</a></li>
+  <li><a class="link" href="#postprocessing">Post-processing</a></li>
+  <li><a class="link" href="#ui">UI</a></li>
+  <li><a class="link" href="#finalimage">Final Image</a></li>
+</ol>
+
+<h2 id="introduction">Introduction</h2>
 <p>
-  Teardown is a physics-based voxel game. The object is to plan a heist by crafting the optimal route using various tools of destruction offered to the player. There is also a sandbox mode in which the player can wreak havoc to their heart's content or until their computer starts lagging unbearably, whichever comes first.
+  Teardown is a physics-based voxel game. The object is to plan a heist by crafting the optimal route using various tools of destruction offered to the player. There is also a sandbox mode in which the player can wreak havoc to their heart's content or until their computer starts lagging unbearably, whichever comes first. If you haven't already, I highly recommend giving it a shot.
 </p>
 <p>
-  Of course, if you haven't already, go buy the game and check it out for yourself! Note that some of the images and videos in this post are slightly modified to increase readability (e.g., dark textures were brightened). I can't remember all the ones I changed, so just take this whole thing with a grain of pink Himalayan salt. Without further ado, let's get on with this.
+  Some of the images and videos in this post are slightly brightened to increase readability and not all of them retain their original resolution (I didn't want this page to be hundreds of megabytes), so just take this whole thing with a grain of pink Himalayan salt.
 </p>
 <p>
-  Here is the main frame whose composition we will be examining, though we will briefly look at other frames that contain effects not seen here.
+  Without further ado, let's begin!
+</p>
+<p>
+  We will mainly be examining the composition of the following frame, but we will briefly look at others which contain certain effects not seen here.
 </p>
 <img src="assets/teardown/final_image.png">
 
-<h2>Configuration</h2>
+<h2 id="configuration">Configuration</h2>
 <p>
   The frame was captured at maximum graphical settings, minus image effects. The game is running at 2560x1440 (also known as 2K or QHD).
 </p>
@@ -43,7 +88,7 @@
   As you can see, there aren't many options to choose from.
 </p>
 
-<h2>High-Level View</h2>
+<h2 id="highlevel">High-Level View</h2>
 <p>
   Teardown is a physically-inspired deferred renderer that uses voxel ray tracing for certain secondary effects. The renderer is built on OpenGL 3.3, meaning it does not (and cannot) use certain "modern" API features like hardware-accelerated ray tracing (present in Turing+ and Navi 2x+ GPUs) or compute shaders. Almost all effects are rendered in fragment shaders.
 </p>
@@ -51,12 +96,12 @@
   Fun fact: Teardown does not feature global illumination, but it does have some features that require off-screen visibility as we'll see.
 </p>
 
-<h2>Pre-Rendering Tasks</h2>
+<h2 id="prerender">Pre-Rendering Tasks</h2>
 <p>
   A frame begins by resetting most of OpenGL's pipeline state. This is common in OpenGL renderers to ensure the frame is starting with a clean slate and prevent leakage from the previous frame.
 </p>
 
-<h2>Base/G-Buffer Pass</h2>
+<h2 id="basepass">Base/G-Buffer Pass</h2>
 <p>
   Like many deferred renderers, Teardown's first big workload is generating the G-buffer (geometry buffer). The G-buffer consists of the following textures:
   <ul>
@@ -95,7 +140,7 @@
   <div><img src="assets/teardown/action_g_motion.png"></div>
 </div>
 
-<h3>Generating the G-Buffer</h3>
+<h3 id="generating">Generating the G-Buffer</h3>
 <p>
   Here is a short video showing every draw call issued during the pass. The darker frames interspersed are linear depth texture blits. Note that this is only viewing the albedo buffer:
 </p>
@@ -103,7 +148,7 @@
   <source src="assets/teardown/basepass.mp4" type="video/mp4">
 </video>
 <p>
-  The observer may notice that the wireframe meshes do not precisely match the geometry that is actually rendered. Teardown is actually rasterizing the oriented bounding box (OBB) of each object, then tracing a ray through the box to intersect with the voxel model. The algorithm used is a modified version of voxel DDA, like the one in <a class="link" href="https://www.shadertoy.com/view/4dX3zl">this shader</a>, except that it uses mipmaps to form a dense octree to accelerate empty space traversal. The ray tracing happens entirely within the fragment shader. In the stream in which Tuxedo Labs explained the renderer (which is now deleted), they mentioned <a class="link" href="http://www.cse.yorku.ca/~amana/research/grid.pdf">this paper</a> specifically.
+  The observer may notice that the wireframe meshes do not precisely match the geometry that is actually rendered. Teardown is actually rasterizing the oriented bounding box (OBB) of each object, then tracing a ray through the box to intersect with the voxel model. The algorithm used is a modified version of voxel DDA, similar to the one in <a class="link" href="https://www.shadertoy.com/view/4dX3zl">this shader</a>, except that it uses mipmaps to form a dense octree to accelerate empty space traversal. The ray tracing happens entirely within the fragment shader. In the stream in which Tuxedo Labs explained the renderer (which is now deleted), they mentioned <a class="link" href="http://www.cse.yorku.ca/~amana/research/grid.pdf">this paper</a> specifically.
 </p>
 <p>
   Another thing to note is that only the backside of each object's OBB is rendered. This allows the camera to clip with the bounding volume and still have the object render.
@@ -148,7 +193,7 @@
 <p>
   Because only objects intersecting with the view frustum are rendered, we can deduce that frustum culling is used to reduce the number of draw calls in this pass.
 </p>
-<h3>Transparency</h3>
+<h3 id="transparency">Transparency</h3>
 <p>
   Being a deferred renderer makes rendering transparent objects difficult, since the G-buffer only stores attributes for a single surface. Teardown approaches this by using dithering to implement <a class="link" href="https://digitalrune.github.io/DigitalRune-Documentation/html/fa431d48-b457-4c70-a590-d44b0840ab1e.htm">screen-door transparency</a>. Then, temporal anti-aliasing along with a per-frame subpixel jitter is used to turn this dithered image into a continuous one.
 </p>
@@ -156,13 +201,13 @@
   <div><img src="assets/teardown/screendoor.png"></div>
   <div><img src="assets/teardown/screendoor2.png"></div>
 </div>
-<h3>Cables</h3>
+<h3 id="cables">Cables</h3>
 <p>
   Cables and ropes in Teardown are drawn not as tiny voxels or SDFs, but as good ol' billboarded triangle lists. These are drawn after all the solid geometry.
 </p>
 <img src="assets/teardown/cables_1.png">
 <img src="assets/teardown/cables_2.png">
-<h3>Smoke</h3>
+<h3 id="smoke">Smoke</h3>
 <p>
   After cables, smoke and other particle effects are rendered. Some of them sample from a texture atlas:
 </p>
@@ -196,7 +241,7 @@
 </p>
 <img src="assets/teardown/smoke_final.png">
 
-<h3>Rain and Snow</h3>
+<h3 id="rainsnow">Rain and Snow</h3>
 <p>
   Rain and snow are rendered as a cluster of a few thousand billboards in front of the camera, whose orientations are computed on the CPU. Similar to smoke, the fragment shader for rain and snow uses a dithered approach to transparency.
 </p>
@@ -215,7 +260,8 @@
   The splash effect for rain is created by placing perpendicular quads on the ground. Here is an example of the quads that are rendered for rain. A very similar-looking arrangement is drawn for snow, minus the tiny quads on the ground representing splashes.
 </p>
 <img src="assets/teardown/rain_billboards.png">
-<h3>Water</h3>
+
+<h3 id="water">Water</h3>
 <p>
   Water is drawn, perhaps unsurprisingly, as a series of quads (one for each plane) at the very end of the G-buffer pass. A static foam effect is drawn on top of the entire body of water. Then, up to 64 smaller, distorted foam "splashes" that appear in the wake of boats or when an entity intersects with the water.
 </p>
@@ -237,12 +283,12 @@
 </p>
 <img src="assets/teardown/water_shaded.png">
 
-<h2>Computing the Focal Plane</h2>
+<h2 id="focalplane">Computing the Focal Plane</h2>
 <p>
   The new focal plane is computed by sampling the linear depth buffer in a spiral around the center of the screen using <a class="link" href="http://extremelearning.com.au/going-beyond-golden-ratio/">the golden ratio</a>. <a class="link" href="https://www.shadertoy.com/view/mdlXz4">Here</a> is a simple shader that shows the pattern used. The new focal plane is then blended with the old focal plane (20% of the new focal plane is used) to create a smooth transition over several frames. The updated focal plane is written to a 1x1 RG16_FLOAT texture and is later used for depth of field (which is disabled in this frame).
 </p>
 
-<h2>Blurring the Normals</h2>
+<h2 id="blurnormals">Blurring the Normals</h2>
 <p>
   The normals of nearby pixels are blurred in a full-screen pass using the same sampling technique as previously described. This gives the illusion of objects being beveled after they are shaded.
 </p>
@@ -250,7 +296,7 @@
 <img src="assets/teardown/gNormalPostBlur.png">
 <img src="assets/teardown/shadedPostBlur.png">
 
-<h2>Lighting Pass</h2>
+<h2 id="lightingpass">Lighting Pass</h2>
 <p>
   In this pass, proxy geometries for the lights are drawn and pixels receive direct illumination, much like a classical deferred renderer. What Teardown does differently is, again, in the fragment shader as we'll explore.
 </p>
@@ -267,7 +313,7 @@
   </ol>
 </p>
 
-<h3>World Volume</h3>
+<h3 id="worldvolume">World Volume</h3>
 <p>
   The world volume is a 1252x128x1252 texture, which represents the opaque voxels in the level. This texture is used for all ray tracing that occurs after generating the G-buffer, so it's important to understand how it works. Here are the first few hundred layers:
 </p>
@@ -290,7 +336,7 @@
   <source src="assets/teardown/voxelization_artifact.mp4" type="video/mp4">
 </video>
 
-<h3>Ambient Lighting</h3>
+<h3 id="ambientlighting">Ambient Lighting</h3>
 <p>
   Ambient lighting is computed by casting two rays per pixel in cosine-weighted random directions on the unit hemisphere. The starting position of every ray is also jittered in all dimensions to, according to one comment, "hide voxel artefacts", though I couldn't see much of a difference in this scene when removing it.
 </p>
@@ -328,7 +374,7 @@
   This algorithm has the advantage of taking a small number of steps in the worst case (unlike sparse or dense DDA of the same distance) and only samples the least cache-friendly level up to eight times (approximately).
 </p>
 
-<h3>Sun Lighting</h3>
+<h3 id="sunlighting">Sun Lighting</h3>
 <p>
   After ambient lighting, the lighting from the sun is added. To do this, a ray from each pixel is shot in the direction of the sun. Like in the ambient lighting pass, the position of each ray is jittered, giving a constant-width penumbra on shadows.
 </p>
@@ -349,7 +395,7 @@
   The sun lighting pass uses the sparse ray casting method. This method differs from the super sparse tracing method in that it dynamically switches between LOD levels based on the 'sparseness' of the voxel grid. In short, hits will reduce the mip level for the next step of the trace, while misses will increase it.
 </p>
 
-<h3>Local Lights</h3>
+<h3 id="locallights">Local Lights</h3>
 <p>
   In classic deferred renderer style, lights are rendered with proxy geometry with front-face culling and depth test disabled. Then, all pixels covered by the proxy geometry calculate the contribution from that light. A spherical or hemispherical proxy volume is chosen based on the type of light, as we will later see.
 </p>
@@ -379,7 +425,8 @@
 <p>
   Light attenuation depends on both the distance from the ray to the light (per the inverse square law) and the type of light. Sphere and capsule lights have no extra attenuation since they distribute light evenly in all directions. Cone lights emit light in a spherical cone with both an inner radius of full intensity, and an outer radius where the intensity falls off to zero. Area lights have a similar attenuation factor to cone lights, except there is only one cosine to consider rather than two.
 </p>
-<h2>Spatiotemporal Irradiance Denoising</h2>
+
+<h2 id="irradiancedenoise">Spatiotemporal Irradiance Denoising</h2>
 <p>
   You have probably noticed that the various stochastic effects create a lot of noise in the previous videos and images. Reducing noise is done by taking more samples for these effects. However, samples are quite costly, so instead of simply taking more samples per pixel each frame, Teardown reuses samples from the previous frame to reduce noise.
 </p>
@@ -390,7 +437,8 @@
   <div><img src="assets/teardown/spatiotemporal_before.png"></div>
   <div><img src="assets/teardown/spatiotemporal_after.png"></div>
 </div>
-<h2>Modulate Albedo and Emissive</h2>
+
+<h2 id="modulate">Modulate Albedo and Emissive</h2>
 <p>
   Until this point, we have only observed demodulated irradiance. That is, the color of the surface if its albedo was 1 and there was no emission. This allows us to filter noisy input (lighting) without unnecessarily blurring non-noisy input (albedo and emissive).
 </p>
@@ -402,7 +450,7 @@
   <div><img src="assets/teardown/modulate_after.png"></div>
 </div>
 
-<h2>Volumetric Lighting</h2>
+<h2 id="volumetriclighting">Volumetric Lighting</h2>
 <p>
   Volumetric lighting is rendered by first drawing the light proxy volumes (again). Then, a ray is marched from the camera to the far plane. At each step in the ray, another ray is launched from that point toward a random point on the light source to check for visibility. If the light is visible, then a small amount of color is accumulated in the volumetric lighting texture.
 </p>
@@ -418,7 +466,8 @@
 <p>
   Volumetric lighting is rendered at quarter resolution (half on each axis) since it is a costly effect.
 </p>
-<h2>Spatiotemporal Volumetric Denoising</h2>
+
+<h2 id="volumetricdenoising">Spatiotemporal Volumetric Denoising</h2>
 <p>
   The volumetric buffer is denoised similarly to how illumination is denoised. First, several samples of the volumetric buffer are taken, then combined using a bilateral filter to prevent blurring over edges. Then, the motion vectors are used to find a sample of the previous frame's volumetric buffer, which is then mixed in a 50-50 ratio to produce the final smooth color.
 </p>
@@ -430,7 +479,7 @@
   <div><img src="assets/teardown/volumetricdenoise_after.png"></div>
 </div>
 
-<h2>Specular Reflections</h2>
+<h2 id="specularreflections">Specular Reflections</h2>
 <p>
   For any reflective surface (whose G-buffer reflectivity is greater than zero), a world-space ray is cast in reflection direction, jittered by a small amount depending on the surface roughness. This jitter gives us blurry reflections for rough materials and sharp reflections for smooth ones. Rays will travel up to 32 units before terminating. If no voxels are hit during the ray's journey, then the path is considered unblocked. In this case, the color of the skybox will be used for the reflection. If the ray hits a voxel that is visible on the screen, its color will be used. This essentially allows for off-screen objects to occlude specular rays, while on-screen objects can have their lighting visible in reflections.
 </p>
@@ -447,7 +496,8 @@
   Reflections are drawn into a separate buffer so they can be denoised separately.
 </p>
 <img src="assets/teardown/specular_cubemap.png">
-<h2>Temporal Specular Denoising</h2>
+
+<h2 id="speculardenoising">Temporal Specular Denoising</h2>
 <p>
   Because specular lighting is a high-frequency phenomenon, a spatial filter would remove important detail from the image. Therefore, Teardown uses only a temporal blend whose factor depends on the difference in reflectivity between the previous and current frame reflection (a greater difference means more of the current frame will be used). As usual, the pixel is first projected to its location in the previous frame using the motion vector.
 </p>
@@ -456,7 +506,7 @@
   <div><img src="assets/teardown/speculardenoise_after.png"></div>
 </div>
 
-<h2>Composite</h2>
+<h2 id="composite">Composite</h2>
 <p>
   Now that diffuse, specular, and fog have been rendered and denoised, they can be composited into a single image.
 </p>
@@ -467,7 +517,8 @@
   Finally, the illuminated fog and height-based fog are added to the surface color, and the skybox is rendered.
 </p>
 <img src="assets/teardown/applyspecular_after.png">
-<h3>Sprites</h3>
+
+<h2 id="sprites">Sprites</h2>
 <p>
   At this point (after all opaque surfaces have been shaded), transparent sprites like glare from lamps and the sun are drawn. The in-game photo mode quite effectively reveals how these are drawn:
 </p>
@@ -478,7 +529,7 @@
   As you can see, these are drawn as camera-aligned billboards which only appear when the center of the light source is visible. They are essentially placed on top of the rendered image, so they aren't subjected to depth testing.
 </p>
 
-<h2>Automatic Exposure</h2>
+<h2 id="automaticexposure">Automatic Exposure</h2>
 <p>
   To automatically adjust the exposure of the virtual camera, Teardown first finds the average luminance of the image. This is done by rendering the luminance of the image to a 256x256 texture, then generating its mip chain to get a series of averaged luminances.
 </p>
@@ -491,7 +542,7 @@
   All this only calculates the <i>target</i> exposure. Because we don't want the image brightness to rapidly change (creating a flickering effect) while turning, the real exposure is a mix between the old exposure and the target exposure with an alpha of 0.05. This value is rendered to a 1x1 texture which will later be used to expose the image.
 </p>
 
-<h2>Temporal Anti-Aliasing</h2>
+<h2 id="taa">Temporal Anti-Aliasing</h2>
 <p>
   TAA is Teardown's primary method of anti-aliasing. The implementation in Teardown samples the current frame in a plus pattern to compute a min and max color. The area around the reprojected "old" sample (last frame's output) is sampled to compute another min and max color in a similar manner. Then, the new and old values are compared for similarity to determine a value <code>t</code>. A low <code>t</code> means the old sample will be used, while a high <code>t</code> means the old sample clamped to the current frame's min and max color will be used. This color is then blended with the current frame's sample to produce the final color.
 </p>
@@ -506,24 +557,58 @@
   <div><img src="assets/teardown/taa_after.png"></div>
 </div>
 
-<h2>Bloom</h2>
+<h2 id="bloom">Bloom</h2>
 <p>
-  Downscale and upscale :O WIP
+  To compute bloom, Teardown first creates a threshold so that only bright areas of the screen get the effect. This threshold is rendered into its own image.
 </p>
-
-<h2>UI</h2>
+<img src="assets/teardown/bloom_threshold.png">
 <p>
-  The crosshairs are drawn as quads with an image placed on top.
+  Then, the thresholded image is repeatedly downsampled to 20x11 (from 2560x1440) using a separable 7x7 gaussian filter. The video is brightened for clarity.
+</p>
+<video controls class="center">
+  <source src="assets/teardown/bloom_downsample.mp4" type="video/mp4">
+</video>
+<p>
+  Then, each of the low-detail bloom images is composited onto a half-resolution image using a simple bilinear sampler. The ultimate effect is a wide high-order blur with a sharp peak and a long tail (contrasted with a single gaussian, which can only produce one or the other). This video was also brightened for clarity, as the final effect is rather subtle.
+</p>
+<video controls class="center">
+  <source src="assets/teardown/bloom_upsample.mp4" type="video/mp4">
+</video>
+<p>
+  Before compositing the bloom image onto the screen, a very simple temporal reprojection-accumulation pass is done, blending the old bloom with the new bloom in a 50% mix. This pass makes no visible difference in this scene, but I suspect it's used to prevent flickering bloom in scenes with bright subpixel features (which would be captured every Nth frame by the camera jitter or during motion).
+</p>
+<h2 id="postprocessing">Post-processing</h2>
+<p>
+  The final thing Teardown does to the raw image is apply all post-process effects in a single shader. This includes:
+  <ol>
+    <li>Applying bloom to the composited image with scale (in this image, the bloom scale was 1.0)</li>
+    <li>Apply the exposure that was computed earlier</li>
+    <li>Adjust the image saturation</li>
+    <li>Adjust the color balance</li>
+    <li>Apply tone mapping operator <code>1 - exp(-color)</code>. I don't know the name of this operator, but it behaves like a more-quickly-saturating version of Reinhard</li>
+    <li>Apply gamma correction (with gamma=2.2 times a user-defined factor)</li>
+  </ol>
+  The output of this shader is an image that you're probably familiar with by now:
+</p>
+<img src="assets/teardown/postprocessed.png">
+
+<h2 id="ui">UI</h2>
+<p>
+  The UI is the final thing to be rendered, and it consists of only a few quads that are drawn and blended straight onto the framebuffer.
+</p>
+<p>
+  The crosshairs are drawn first as quads with an image placed on top.
 </p>
 <img src="assets/teardown/ui_0.png" style="max-height:512px; max-width:512px">
 <p>
-  Characters of text are rendered individually with a signed distance field (SDF) font atlas. SDFs are useful for rendering anti-aliased text at various degrees of magnification.
+  Lastly, characters of text are rendered individually with a signed distance field (SDF) font atlas. SDFs are useful for rendering anti-aliased text at various degrees of magnification.
 </p>
 <div class=flexy>
   <div><img src="assets/teardown/sdf_font.png"></div>
   <div><img src="assets/teardown/ui_1.png"></div>
 </div>
-<h2>Final Image</h2>
+
+<h2 id="finalimage">Final Image</h2>
 <p>
   Here is the final image once more. Hopefully this post has given you a deeper understanding of Teardown's renderer, and with it, a deeper appreciation for its graphics.
 </p>
