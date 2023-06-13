@@ -1,0 +1,326 @@
+<!doctype html>
+<html>
+  <head>
+    <link rel="icon" href="assets/icon.png">
+    <link rel="stylesheet" href="style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="highlight/styles/night-owl.min.css">
+    <script src="highlight/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
+  </head>
+  <body>
+    <ul class="headerBar">
+      <li class="headerli"><a href="index.html">Blog</a></li>
+      <li class="headerli"><a href="about.html">About</a></li>
+    </ul><title>Porting FSR 2 to OpenGL</title>
+<h1>Porting FSR 2 to OpenGL</h1>
+
+<h3>June 2023</h3>
+
+<h2>Table of Contents</h2>
+<ol>
+  <li><a class="link" href="#idea">The Idea</a></li>
+  <li><a class="link" href="#fsr2">Now Hol' Up, What Exactly is FSR 2?</a></li>
+  <li><a class="link" href="#investigating">Investigating FSR 2</a></li>
+  <li><a class="link" href="#porting">Porting the Shaders</a></li>
+  <li><a class="link" href="#doing">Actually Doing The Thing&trade;</a></li>
+  <ol>
+    <li><a class="link" href="#glslang">Speaking of glslang</a></li>
+    <li><a class="link" href="#interlude">Interlude</a></li>
+    <li><a class="link" href="#backend">Creating the Backend</a></li>
+    <li><a class="link" href="#challenges">Challenges</a></li>
+      <ol>
+      <li><a class="link" href="#performance">Performance</a></li>
+      <li><a class="link" href="#image-units">Image Units</a></li>
+      <ol>
+        <li><a class="link" href="#attempt1">Attempt #1</a></li>
+        <li><a class="link" href="#attempt2">Attempt #2</a></li>
+        <li><a class="link" href="#attempt3">Attempt #3</a></li>
+        <li><a class="link" href="#attempt4">Attempt #4</a></li>
+      </ol>
+      <li><a class="link" href="#ndc">NDC Depth Convention</a></li>
+    </ol>
+  </ol>
+  <li><a class="link" href="#integrating">Integrating FSR 2</a></li>
+  <li><a class="link" href="#sample">Sample</a></li>
+</ol>
+
+<h2 id="idea">The Idea</h2>
+<p>
+  I've been floating the idea of making an OpenGL backend for FSR 2 for a while now. However, only recently have I acquired the motivation to actually do it. I knew that writing a bespoke TAA(U) implementation, let alone a <i>good</i> one, was a task worthy of the gods, so I wanted to defer it to them. I also found some other OpenGL users who were willing to integrate FSR 2. At that point, I figured my time had come.
+</p>
+
+<h2 id="fsr2">Now Hol' Up, What Exactly is FSR 2?</h2>
+<p>
+  Boy, am I glad you asked! <a class="link" href="https://gpuopen.com/fidelityfx-superresolution-2/">FSR 2</a>, or FidelityFX Super Resolution 2, is a temporal upscaling (TAAU) algorithm developed by AMD. It is comparable to Nvidia's DLSS, except it is completely open-source and doesn't require vendor-specific GPU features (tensor cores) to run. <a class="link" href="https://youtu.be/97JIldpUGE4">Here is a cool presentation</a> going over algorithmic details and optimizations in FSR 2.
+</p>
+<p>
+  In other words, FSR 2 has two main uses:
+  <ol>
+    <li>Providing temporal anti-aliasing (TAA)</li>
+    <li>Allowing the application to render at a lower internal resolution, improving performance</li>
+  </ol>
+  The application programmer can choose the render resolution and then the display resolution for FSR 2 to output, giving control over performance and quality.
+</p>
+
+<h2 id="investigating">Investigating FSR 2</h2>
+<p>
+  To understand how to create a new backend for FSR 2, we need to understand how it is structured.
+</p>
+<p>
+  FSR 2 has a modular design, allowing us to connect the frontend to any backend of our choice. This design makes it much easier to implement support for an API of our choosing (OpenGL in this instance), as we don't have to understand the intricacies of the FSR 2 algorithm.
+</p>
+<img src="assets/blog/fsr/api-architecture.svg">
+<p>
+  Armed with this knowledge, let's jump into the source to see what we're up against!
+</p>
+<img src="assets/blog/fsr/source_root.png" style="max-height:256px; max-width:256px">
+<p>
+  The <code>VK</code> and <code>DX</code> folders, despite what I initially thought, did not contain the Vulkan and DX12 backends for FSR 2. These were the sample projects using Cauldron, which we aren't interested in.
+</p>
+<img src="assets/blog/fsr/VK_root.png" style="max-height:512px; max-width:256px">
+<p>
+  Opening <code>ffx-fsr2-api</code> revealed what we were looking for.
+</p>
+<img src="assets/blog/fsr/source_backends.png" style="max-height:512px; max-width:256px">
+<p>
+  The frontend can be found in <code>ffx_fsr2.cpp</code>, while the premade backends are located in <code>dx12/ffx_fsr2_dx12.cpp</code> and <code>ffx_fsr2_vk.cpp</code>.
+</p>
+<p>
+  So far so good! The shaders used by the backends can be found in <code>shaders/</code>, naturally.
+</p>
+<img src="assets/blog/fsr/source_shaders.png" style="max-height:768x; max-width:384px">
+<p>
+  An absolute chonker of a directory! One thing to note is that the shaders are quite modular as well- the FSR 2 passes are implemented in the non GLSL/HLSL-specific header files.
+</p>
+
+<h2 id="doing">Actually Doing The Thing&trade;</h2>
+<p>
+  At this point, there are three main things to do:
+  <ol>
+    <li>Port the GLSL shaders to be compatible with OpenGL (GLSL that targets Vulkan is typically [always?] compiled with the <code>GL_KHR_vulkan_glsl</code>, adding a few incompatibilities).</li>
+    <li>Create an OpenGL backend.</li>
+    <li>Edit the various CMakeLists.txt to make the above compile.</li>
+  </ol>
+</p>
+
+<h3 id="porting">Porting the Shaders</h3>
+<p>
+  Since the shaders are the heart of the FSR 2 algorithm (and everything else is essentially support code), it makes sense to start here first. This will reveal the shading language requirements of FSR 2, which will determine whether this is possible or not.
+</p>
+<p>
+  Scrolling through the GLSL-specific shader sources, I found that the following extensions are used:
+  <ul>
+    <li>GL_KHR_vulkan_glsl (for separate samplers and textures)</li>
+    <li>GL_EXT_samplerless_texture_functions</li>
+    <li>GL_EXT_shader_image_load_formatted</li>
+    <li>GL_KHR_shader_subgroup_quad</li>
+  </ul>
+  For FP16 (half-precision float) support, the GLSL shaders use these extensions:
+  <ul>
+    <li>GL_EXT_shader_16bit_storage</li>
+    <li>GL_EXT_shader_explicit_arithmetic_types</li>
+  </ul>
+  The first thing I did in porting these shaders was to copy every GLSL-related shader (see the last image) and change the extension to <code>.glsl2</code>. Creative, I know.
+</p>
+<p>
+  <code>ffx_fsr2_callbacks_glsl.h</code> contains all the resource declarations and definitions of accessor functions. This file contained most of the incompatibilities caused by GL_KHR_vulkan_glsl and GL_EXT_samplerless_texture_functions.
+</p>
+<p>
+  Despite samplers and textures being separate objects in OpenGL, GLSL (without GL_KHR_vulkan_glsl) annoyingly only supports combined texture-samplers. Porting separate samplers and textures in shaders is straightforward- just make a <code>sampler2D</code> for each combination thereof. I was initially afraid of a combinatorial explosion, but it turns out that only one sampler (linear, edge clamp) is actually used when calling the <code>texture*</code> functions. All other texture access came from <code>texelFetch</code>, which didn't care about the sampler (and is the rationale behind GL_EXT_samplerless_texture_functions). The other incompatibility from this extension was caused by the <code>set = 1</code> layout qualifier on all resource declarations. Fortunately, the fix was as shrimple as deleting those.
+</p>
+<p>
+  GL_EXT_shader_image_load_formatted is a neat extension that I learned about while browsing the GLSL sources. This extension doesn't appear to be necessary (all non-<code>writeonly</code> images I saw had a format qualifier), but I kept it since it is supported by the major OpenGL vendors, and I wanted to change the shaders as little as possible.
+</p>
+<p>
+  GL_KHR_shader_subgroup_quad is a subset of the functionality exposed by GL_KHR_shader_subgroup, again a reasonably well-adopted extension.
+</p>
+<p>
+  I couldn't find a cross-platform OpenGL analogue of GL_EXT_shader_16bit_storage, but it didn't matter since the shaders compiled with or without the extension (and both NV and AMD drivers would ingest SPIR-V that contained the extension).
+</p>
+<p>
+  GL_EXT_shader_explicit_arithmetic_types is used to expose the faster FP16 types for certain passes. OpenGL drivers do not advertise support for this extension explicitly, but I found that, like the previous one, the drivers would happily ingest it anyways. If that wasn't the case, the important parts can be exposed by enabling GL_NV_gpu_shader5, GL_AMD_gpu_shader_half_float, and GL_AMD_gpu_shader_int16. I only didn't do that because glslang spat out some scary warning about GL_NV_gpu_shader5 not being recognized.
+</p>
+
+<h4 id="glslang">Speaking of glslang</h4>
+<p>
+  As you may already know, Vulkan essentially only accepts shader code in the form of SPIR-V. What this practically means is that you (literally you, the application programmer, whom I point my finger at) must invoke some third-party compiler at some point to transform GLSL (or HLSL, or any number of relatively esoteric shading languages) into SPIR-V. FSR 2 compiles shaders with a tool called "FidelityFX_SC.exe". The tool is used to invoke dxc, fxc, or glslang (depending on the source language), and uses special syntax to automatically generate shader permutations. It also generates C++ headers containing reflected resource bindings, the shader binary, and the permutation flags to make it easy to consume in the application.
+</p>
+<p>
+  OpenGL, on the other hand, consumes shaders as raw-ass GLSL. This would clearly be a major blocker as I'd have to rewrite the shader tool (whose source is unavailable) to make it output text (and no, the <code>-E</code> flag to output preprocessed text did not work). Too bad OpenGL doesn't support SPIR-V. Well... <a class="link" href="https://www.khronos.org/opengl/wiki/SPIR-V">unless</a>?
+</p>
+<p>
+  Thankfully, OpenGL supports SPIR-V, so we can use the existing infrastructure with relatively little intervention. We simply replace the shader compiler flag <code>--target-env vulkan1.1</code> with <code>--target-env opengl --target-env spirv1.3</code> to target OpenGL and use GL_KHR_shader_subgroup.
+</p>
+
+<h3 id="interlude">Interlude</h3>
+<p>
+  I know, it's 2023 and it has been a while since you got to see a pretty picture. Savor this respite from the madness.
+</p>
+<img src="assets/blog/fsr/fergs.jpg">
+
+<h3 id="backend">Creating the Backend</h3>
+<p>
+  A backend for FSR 2 consists of two major components:
+  <ul>
+    <li>A public interface allowing the user to create the backend and register textures with it</li>
+    <li>A private interface that is used by the FSR 2 frontend. This contains functions for creating and destroying resources (textures, buffers, and pipelines), and for executing jobs (copies, clears, and dispatches)</li>
+  </ul>
+  I decided to port the Vulkan backend to OpenGL, as it was most familiar to me.
+</p>
+<p>
+  Overall, this process wasn't terribly interesting. I started by copying <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/vk/ffx_fsr2_vk.h">the Vulkan backend's interface</a> to <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/gl/ffx_fsr2_gl.h">OpenGL</a> (some of the comments may even be the same if you're viewing this early enough). Then, I copied <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/vk/ffx_fsr2_vk.cpp">the bulk of the Vulkan backend</a> and removed the Vulkan headers, revealing the work that I had to do.
+</p>
+<img src="assets/blog/fsr/source_begin.png" style="max-height:512px; max-width:64px">
+<p>
+  Some highlights include:
+  <ul>
+    <li>Removing code to track resource states and generate correct barriers</li>
+    <li>Removing code that created staging buffers, obviating the need to implement the copy job (which wasn't used by the frontend)</li>
+    <li>Removing code related to memory allocation, pipeline layouts, descriptor pools, descriptor set layouts, and descriptor set writes</li>
+    <li>Using sampler objects, texture views, persistent mapping, and SPIR-V to mimic Vulkan behavior with minimal code changes</li>
+  </ul>
+  The results can be found <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/gl/ffx_fsr2_gl.cpp">here</a>. The OpenGL backend is about 700 lines shorter than the Vulkan backend overall.
+</p>
+
+<h3 id="challenges">Challenges</h3>
+
+<h4 id="performance">Performance</h4>
+<p>
+  Although I tried to maintain performance parity with the Vulkan and DX12 backends, I did not manage it on Nvidia GPUs.
+</p>
+<p>
+  FSR 2 ran about 3x slower than expected on my RTX 3070 due to high VRAM throughput in the <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#depth-clip">depth clip pass</a> and <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#reproject--accumulate">reproject & accumulate pass</a>. These are the third and fifth passes as denoted by the blue markers in the "Draw/Dispatch Start" row.
+</p>
+<img src="assets/blog/fsr/fwog_fsr2_perf_nsight.png">
+<p>
+  Compare this graph with that of the Vulkan backend running under Cauldron (the framework used to test FSR 2). Note that VRAM throughput is much lower, while other (faster) units have much higher throughput.
+</p>
+<p>
+  The only hint I have that points to the cause is this code found in the Vulkan backend:
+<pre><code>// Workaround: Disable FP16 path for the accumulate pass on NVIDIA due to reduced occupancy and high VRAM throughput.
+if (physicalDeviceProperties.vendorID == 0x10DE)
+    supportedFP16 = false;</code></pre>
+  Implementing the same workaround in the GL backend yielded no noticeable difference in performance. In fact, commenting out this code in the Vulkan backend barely changes performance in the Cauldron sample. In conclusion, it is probably something else, but I do not know what. My best guess is that the shader compiler uses different heuristics based on the API, leading to different codegen.
+</p>
+<img src="assets/blog/fsr/vk_fsr2_perf_nsight.png">
+<p>
+  On AMD, however, performance was <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#performance">exactly as expected</a> on my RX 6800.
+</p>
+
+<h4 id="image-units">Image Units</h4>
+<p>
+  The most cursed issue I ran into was a difference in how images units were represented in OpenGL and Vulkan. The Vulkan spec says this:
+</p>
+<p>
+  <i>
+    <code>maxPerStageDescriptorStorageImages</code> is the maximum number of storage images that can be accessible to a single shader stage in a pipeline layout.
+  </i>
+</p>
+<p>
+  The OpenGL spec says this:
+</p>
+<p>
+  <i>
+    Image units are numbered beginning at zero, and there is an implementation-dependent number of available image units (the value of <code>MAX_IMAGE_UNITS</code>).
+  </i>
+</p>
+<p>
+  Hopefully you can see the potential issue. Nvidia GPUs today support only 8 image units in OpenGL, which means the largest binding index we can use is 7. However, the Vulkan FSR 2 backend uses larger indices, since the limit there is only how many storage images can be bound.
+</p>
+
+<h5 id="attempt1">Attempt #1</h5>
+<p>
+  The first solution I tried was using bindless textures and setting them with <code>glUniform1i</code>. I did not get far, as simply adding <code>#extension GL_ARB_bindless_texture : require</code> caused the shaders to not compile in glslang. I later <a class="link" href="https://github.com/KhronosGroup/glslang/issues?q=is%3Aissue+gl_arb_bindless_texture">found GitHub issues</a> implying that the extension was supported, so I must have been using an old version of the compiler. However, I already moved on at this point.
+</p>
+<img src="assets/blog/fsr/attempt1.png" style="max-height:512px; max-width:512px">
+
+<h5 id="attempt2">Attempt #2</h5>
+<p>
+  The next idea I had was to use reflection data from the shader tool (FidelityFX_SC.exe) and set image bindings starting from zero at runtime. Essentially, something like this:
+</p>
+<pre><code class="language-cpp">int currBinding = 0;
+for (binding : imagesToBind) {
+    auto loc = glGetUniformLocation(program, binding.name);
+    glProgramUniform1i(program, loc, currBinding);
+    glBindImageTexture(currBinding, binding.image, ...);
+    currBinding++;
+}</code></pre>
+<p>
+  This worked! ...Until I ran the code on an RDNA 2 system, where the <code>glProgramUniform1i</code> calls inexplicably did nothing. After a long  investigation, I discovered that mutating image bindings of SPIR-V shaders is not well-defined by the specs (both SPIR-V and OpenGL 4.6), which means it is perfectly understandable that an implementation or <a class="link" href="https://github.com/baldurk/renderdoc/issues/2942">RenderDoc</a> would not support this.
+</p>
+<img src="assets/blog/fsr/attempt2.png" style="max-height:512px; max-width:512px">
+
+<h5 id="attempt3">Attempt #3</h5>
+<p>
+  In my weakened state, I remembered that I still had a trick up my sleeve: <code>--auto-map-bindings</code>. This glslang option will make it automatically set resource bindings starting from zero, making it a seemingly perfect fit for this case.
+</p>
+<p>
+  Unfortunately, glslang exhibits finnicky behavior with this flag, as I found it difficult to control which resources got the smaller binding indices. This meant that images could still be assigned large binding indices, even if they were declared before the other resources (I couldn't reproduce this in a simple test shader though). In hindsight, this strategy would have worked if I assigned explicit high indices to the samplers and uniform buffers, but I didn't think of it at the time.
+</p>
+<img src="assets/blog/fsr/attempt3.png" style="max-height:512px; max-width:512px">
+
+<h5 id="attempt4">Attempt #4</h5>
+<p>
+  After facing three crushing defeats, I was desperate to find something that worked without requiring a huge refactoring of the shader-related code. In the command line options for glslang, an angel called to me:
+</p>
+<pre><code class="language-text">--shift-image-binding [stage] num     base binding number for images (uav)
+--shift-sampler-binding [stage] num   base binding number for samplers
+--shift-UBO-binding [stage] num       base binding number for UBOs</code></pre>
+<p>
+  I (ab)used my newfound powers to create this monstrosity:
+</p>
+<pre><code>set(FFX_SC_GL_BASE_ARGS
+  -compiler=glslang -e main --target-env opengl --target-env spirv1.3 --amb --stb comp 8 --ssb comp 8 --sib comp 0 --suavb comp 0 -Os -S comp -DFFX_GLSL=1)</code></pre>
+<p>
+  In short, several options are to ensure that images get priority on bindings 0-7, while other resource bindings start at 8. This is ultimately the solution that was used to solve this binding problem.
+</p>
+TODO: insert hilarious meme here
+<p>
+  Of course, if OpenGL was a sane API, I wouldn't have had to deal with this mess. I'm just happy that it worked without requiring massive changes to FSR 2.
+</p>
+
+<h4 id="ndc">NDC Depth Convention</h4>
+<p>
+  FSR 2 can work with various view-space depth configurations. It does so <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/ffx_fsr2.cpp#L663">by generating constants</a> that can be used to convert NDC-space depth to view-space. This is used in the <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/tree/master#depth-clip">depth clip pass</a>. <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/shaders/ffx_fsr2_depth_clip.h">Here is the shader</a>, for the curious.
+</p>
+<p>
+  As you probably suspect by now, the issue here is OpenGL's unhinged [-1, 1] device depth range not matching Vulkan's (and every other API's) device depth range of [0, 1]. This leads to the constants FSR 2 generates to give subtly wrong results. I didn't fully understand the derivation of the constants from the [0, 1] NDC projection matrix, so I did not derive my own constants to make the conversion correct for most OpenGL apps. However, note the following:
+  <ol>
+    <li>OpenGL offers <code>glClipControl</code>, which allows the user to select the [0, 1] device depth range, bypassing this issue entirely</li>
+    <li>Even with the wrong depth range configuration, the results (from my testing) are imperceptibly wrong</li>
+  </ol>
+  With that, I chose not to dwell on this issue any longer. For the mathematically-inclined: I accept PRs on this repo.
+</p>
+
+<h2 id="integrating">Integrating FSR 2</h2>
+<p>
+  Integrating FSR 2 is surprisingly straightforward. The basic engine requirements are as follows:
+  <ul>
+    <li>Decoupled render and display resolution</li>
+    <li>The ability to apply a per-frame jitter (translation) to the projection matrix</li>
+    <li>The renderer emits high-precision (at least FP16) motion vectors for opaque geometry</li>
+  </ul>
+  There are other things to consider (like supplying the reactive mask and T&C mask) for best quality, but you should consult <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2/blob/master/README.md">the official docs</a> for those.
+</p>
+
+<h2 id="sample">Sample</h2>
+<p>
+  To test my port, I used a relatively basic <a class="link" href="https://github.com/JuanDiegoMontoya/Fwog/blob/main/example/03_gltf_viewer.cpp">glTF viewer sample</a> originally developed as a sample for <a class="link" href="https://github.com/JuanDiegoMontoya/Fwog">my OpenGL wrapper</a>. Here are some pics to wrap things up.
+</p>
+<img src="assets/blog/fsr/aa_0.png">
+<img src="assets/blog/fsr/noaa_0.png">
+<video controls class="center">
+  <source src="assets/blog/fsr/aa_1.mp4" type="video/mp4">
+</video>
+<video controls class="center">
+  <source src="assets/blog/fsr/noaa_1.mp4" type="video/mp4">
+</video>
+
+<br>
+
+<p>
+  Once again, big thanks to the peeps on the Graphics Programming Discord for their support, LVSTRI for inspiring me to finally start this project, and BoyBaykiller for creating <a class="link" href="https://github.com/BoyBaykiller/FidelityFX-FSR2-CSharpBindings/">C# bindings</a> for this fork. And of course, big thanks to AMD (#notsponsored) and the team who worked on providing this wonderful open-source library.
+</p>
+  </body>
+</html>
