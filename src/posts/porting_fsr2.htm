@@ -166,14 +166,14 @@
     <li>Removing code related to memory allocation, pipeline layouts, descriptor pools, descriptor set layouts, and descriptor set writes</li>
     <li>Using sampler objects, texture views, persistent mapping, and SPIR-V to mimic Vulkan behavior with minimal code changes</li>
   </ul>
-  The results can be found <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/gl/ffx_fsr2_gl.cpp">here</a>. The OpenGL backend is about 700 lines shorter than the Vulkan backend overall.
+  The results can be found <a class="link" href="https://github.com/JuanDiegoMontoya/FidelityFX-FSR2/blob/master/src/ffx-fsr2-api/gl/ffx_fsr2_gl.cpp">here</a>. The OpenGL backend (ffx_fsr2_gl.cpp) is about 1200 lines of code overall, 700 fewer than the Vulkan backend.
 </p>
 
 <h3 id="challenges">Challenges</h3>
 
 <h4 id="performance">Performance</h4>
 <p>
-  Although I tried to maintain performance parity with the Vulkan and DX12 backends, I did not manage it on Nvidia GPUs.
+  Performance was something that I hoped would "just work" for both vendors (since the shaders were practically the same). Unfortunately, in the case of Nvidia, I ran into an issue.
 </p>
 <p>
   FSR 2 ran about 3x slower than expected on my RTX 3070 due to high VRAM throughput in the <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#depth-clip">depth clip pass</a> and <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#reproject--accumulate">reproject & accumulate pass</a>. These are the third and fifth passes as denoted by the blue markers in the "Draw/Dispatch Start" row.
@@ -182,16 +182,19 @@
 <p>
   Compare this graph with that of the Vulkan backend running under Cauldron (the framework used to test FSR 2). Note that VRAM throughput is much lower, while other (faster) units have much higher throughput.
 </p>
+<img src="assets/blog/fsr/vk_fsr2_perf_nsight.png">
 <p>
   The only hint I have that points to the cause is this code found in the Vulkan backend:
 <pre><code>// Workaround: Disable FP16 path for the accumulate pass on NVIDIA due to reduced occupancy and high VRAM throughput.
 if (physicalDeviceProperties.vendorID == 0x10DE)
     supportedFP16 = false;</code></pre>
-  Implementing the same workaround in the GL backend yielded no noticeable difference in performance. In fact, commenting out this code in the Vulkan backend barely changes performance in the Cauldron sample. In conclusion, it is probably something else, but I do not know what. My best guess is that the shader compiler uses different heuristics based on the API, leading to different codegen.
+  Implementing the same workaround in the GL backend yielded no noticeable difference in performance. In fact, commenting out this code in the Vulkan backend barely changes performance in the Cauldron sample. I also tried various formats for the input color (in an attempt to minimize VRAM traffic) to no avail.
 </p>
-<img src="assets/blog/fsr/vk_fsr2_perf_nsight.png">
 <p>
-  On AMD, however, performance was <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#performance">exactly as expected</a> on my RX 6800.
+  In conclusion, I do not know what is causing the performance to vary drastically between backends. My best guess is that the shader compiler uses different heuristics based on the API, leading to different code generation.
+</p>
+<p>
+  On AMD, however, performance was <a class="link" href="https://github.com/GPUOpen-Effects/FidelityFX-FSR2#performance">exactly as expected</a> on my RX 6800. No further investigation was required there.
 </p>
 
 <h4 id="image-units">Image Units</h4>
