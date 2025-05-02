@@ -376,6 +376,19 @@ void RenderParticleEmitters(Camera camera, span&ltParticleEmitter&gt emitters) {
   In the main loop, we only need to call <code>ParticleSystemUpdate</code> and <code>RenderParticleEmitters</code> once each frame. Now we can have many times more particles than the CPU version could handle! That said, we still have some areas that can be improved. Most of the time spent in particles is in the particle update loop and rendering, but not the particle spawn loop. Why not the spawn loop? Well, simply because that shader is not invoked very often. Imagine a scenario where we had one million particles to simulate rain. All of those particles would have to be updated and rendered every frame, but only tens of thousands of particles need to be spawned each frame (assuming we spawn one million particles per second and have a framerate of 60hz). Therefore, we're free to focus our optimization efforts on the other shaders.
 </p>
 <h2 id="closing">Closing</h2>
-The <a href="particles_ii.html" class="link">next post</a> discusses ways we can optimize the GPU implementation of this particle system.
+The <a href="particles_ii.html" class="link">next post</a> discusses ways we can optimize the GPU implementation of this particle system.<br>
+<hr>
+<br>
+<div style="display: flex; gap: 0.25rem; justify-content: center">
+  <a href="https://graphics-programming.org/webring/frogs/manpat/prev">⬅️</a>
+  <a href="https://graphics-programming.org/webring/">
+    <img
+      src="https://graphics-programming.org/img/froge.webp"
+      alt="a friendly froge"
+      style="object-fit: contain; width: 1.5em; height: 1.5em"
+    />
+  </a>
+  <a href="https://graphics-programming.org/webring/frogs/manpat/next">➡️</a>
+</div>
   </body>
 </html>

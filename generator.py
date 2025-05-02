@@ -7,15 +7,16 @@
 # is written to a new file in the current directory with the extension '.html'.
 
 import os
+import codecs
 
 rootdir = "."
 header = []
 footer = []
 
-with open("header", "r") as f:
+with codecs.open("header", encoding = "utf-8", mode = "r") as f:
     header = f.readlines()
     
-with open("footer", "r") as f:
+with codecs.open("footer", encoding = "utf-8", mode = "r") as f:
     footer = f.readlines()
 
 for subdir, dirs, files in os.walk(rootdir):
@@ -26,8 +27,8 @@ for subdir, dirs, files in os.walk(rootdir):
             base = os.path.basename(filepath)
             print(os.path.splitext(base)[0] + ".html")
 
-            with open(filepath, "r") as f:
+            with codecs.open(filepath, encoding = "utf-8", mode = "r") as f:
                 #print("".join(header + f.readlines() + footer))
-                tf = open(os.path.splitext(base)[0] + ".html", "w+")
+                tf = codecs.open(os.path.splitext(base)[0] + ".html", encoding = "utf-8", mode = "w+")
                 tf.write("".join(header + f.readlines() + footer))
                 tf.close()
